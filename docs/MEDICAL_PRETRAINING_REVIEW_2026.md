@@ -1,89 +1,184 @@
-# 2026 医学预训练模型调研与本项目选择
+# 2026 医学预训练模型调研与最终实验选择
 
 更新日期：2026-09-29
 
-## 结论
+## 最终结论
 
-本项目不再只使用通用 DINOv3。默认将 **RAD-DINO (microsoft/rad-dino) 作为医学预训练 Transformer target**，并保留 DINOv3 ViT-S/16 作为 general-vision control。
+为了避免“模型架构变化”和“预训练域变化”同时发生，当前项目采用一个更严格的 2×2 对照设计。
 
-这样设计的研究问题从“CNN 和 Transformer 是否可以拼接用于医学异常检测？”升级为“医学域预训练是否会改变跨架构 stitchability，以及这种改变是否在 radiology 与 non-radiology 模态间具有不同规律？”
+### CNN source
 
-主实验仍严格采用 ModelScope 自动下载权重。
+- **medical**：RadImageNet-ResNet50
+- **general**：ImageNet-ResNet50
 
-## RAD-DINO — 当前主医学 target
+二者都是 ResNet50。
 
-- Model: microsoft/rad-dino
-- Architecture: DINOv2-Base / ViT-B/14
-- Hidden dimension: 768
-- 12 transformer blocks
-- Medical pretraining: self-supervised chest radiographs
-- Published work: Exploring scalable medical image encoders beyond text supervision, Nature Machine Intelligence, 2025
-- Model card: https://huggingface.co/microsoft/rad-dino
-- ModelScope: https://modelscope.cn/models/microsoft/rad-dino
+### Transformer target
 
-优点：已确认 ModelScope 可用；是真正医学图像自监督视觉编码器；结构适合 block-level stitching；ViT-B 规模可在 RTX 3090 上进行 adapter-only 实验。
+- **medical**：RadioDINO-S/16
+- **general**：DINO ViT-S/16
 
-限制：主要训练域是 chest X-ray，因此不能把它描述成覆盖所有医学模态的通用 foundation model。报告中应将 Brain/Liver/Chest 的 radiology 结果与 OCT/Pathology 的 non-radiology 结果分开。
+二者都是 ViT-Small/16，224 输入、384 维 token。
 
-## RadioDINO — 科学上非常合适，但目前不作为默认模型
+因此四组实验是：
 
-RadioDINO-S/16 基于 RadImageNet 约 1.35M CT/MRI/ultrasound 图像进行医学自监督训练，384 hidden dimension，和原 DINOv3 ViT-S 尺度接近，非常适合 architecture-matched comparison。
+1. medical CNN → medical ViT（MM，主模型）
+2. medical CNN → general ViT（MG）
+3. general CNN → medical ViT（GM）
+4. general CNN → general ViT（GG）
 
-- Model: https://huggingface.co/Snarcy/RadioDino-s16
-- Project: https://github.com/unica-visual-intelligence-lab/OmniRad
+这样可以把 source-side medical pretraining 与 target-side medical pretraining 的影响拆开分析。
 
-当前没有将其设为默认，是因为本项目要求权重全部使用 ModelScope SDK 自动下载，而本轮调研没有验证到稳定公开的 ModelScope 镜像。
+---
 
-## OmniRad — 2026 年很值得后续加入
+## RadImageNet-ResNet50
 
-OmniRad 是 2026 radiology foundation model，约 1.2M medical images，重点强调 CT/MRI/X-ray/ultrasound 跨模态 transfer，ViT-S 级别且单卡友好。
+官方仓库：
 
-- Project: https://github.com/unica-visual-intelligence-lab/OmniRad
+https://github.com/BMEII-AI/RadImageNet
 
-它的 domain coverage 比 RAD-DINO 更符合 BMAD 的 Brain MRI / Liver CT / Chest X-ray 组合，但当前同样没有作为默认模型，因为尚未验证到符合本项目约束的稳定 ModelScope 下载源。
+RadImageNet 包含约 135 万 CT、MRI 和超声医学图像，覆盖多种解剖部位和病理标签。
 
-## RadImageNet — 医学 CNN source 的自然候选
+官方提供 PyTorch ResNet50 权重，并在官方 notebook 中以 ResNet50 backbone 方式严格加载。
 
-RadImageNet 包含约 1.35M 医学图像，覆盖 CT、MRI、ultrasound 等模态，并公开 ResNet50、DenseNet121 等 CNN 权重。
+当前代码使用：
 
-- Project: https://github.com/BMEII-AI/RadImageNet
+```text
+model/radimagenet_resnet50/resnet50_torch.pt
+```
 
-它是把 CNN source 也医学化的自然选择。但当前版本不直接切换，因为本项目要求所有模型通过 ModelScope 自动下载，而官方权重主要经项目提供的外部下载位置发布；本轮调研未验证到可稳定依赖的 ModelScope RadImageNet CNN repo。
+作为医学 CNN source。
 
-因此本版本采用：General DINOv3 ConvNeXt front + Medical RAD-DINO Transformer tail。研究上可解释为 grafting a general local-feature extractor into a medical-domain transformer representation space。
+---
 
-## BiomedCLIP / MedSigLIP
+## RadioDINO-S/16
 
-它们具有更广泛 biomedical / multimodal medical coverage，尤其适合 pathology、ophthalmology 等 non-radiology 模态。但本项目核心是 CNN→Transformer block-level surgery、中间层 feature alignment 与低成本 3090 实验；VLM/CLIP 会同时引入 text supervision 与不同训练目标，因此第一轮不作为默认 backbone。
+官方模型：
 
-## 为什么不把所有通用模型全部替换成医学模型
+https://huggingface.co/Snarcy/RadioDino-s16
 
-医学预训练并非所有模态和任务上必然优于通用预训练，预训练域与目标模态的匹配关系本身就是需要测量的问题。
+官方代码/项目：
 
-因此使用 controlled comparison：
+https://github.com/Snarci/Radio-DINO
 
-same CNN source / same BMAD splits / same NFFA / same AOSS / same anomaly score / same stitch candidates；仅 target 改为 RAD-DINO medical-pretrained 或 DINOv3 ViT-S general-pretrained。
+RadioDINO-S/16：
 
-这样医学预训练本身就是可测量的实验变量，而不会和异常检测头、数据划分等因素混在一起。
+- ViT-Small
+- patch size 16
+- hidden size 384
+- 约 21.7M 参数
+- DINO 自监督训练
+- 预训练数据为 RadImageNet（CT/MRI/US）
 
-## 输入分辨率选择
+当前代码使用：
 
-RAD-DINO 的公开配置使用 518 级输入，patch size=14；518/14=37，即 1369 patch tokens。默认快速实验用 224，224/14=16，即 256 patch tokens。
+```text
+model/radiodino_s16/config.json
+model/radiodino_s16/model.safetensors
+```
 
-DINOv2 absolute positional embeddings 支持插值，因此本项目默认以 224 进行大规模 screening/final experiments，显著缩短 3090 实验时间。若核心结果成立，建议最后仅对最佳医学 stitch configuration 增加 RAD-DINO 518 resolution ablation。
+作为主医学 Transformer target。
 
-## 当前代码协议
+---
 
-缓存一次写入 s1.npy、s2.npy、s3.npy、target_medical.npy (RAD-DINO) 和 target_general.npy (DINOv3 ViT-S)。每张原图只解码一次，再应用各自模型正确的 normalization。
+## 为什么不再把 RAD-DINO 设为默认主模型
 
-Screening 为 2 target backbones × 3 CNN stages × 3 Transformer cuts = 18 configurations。每个 target 单独按 source-only AOSS 排名，并各取 Top-2，不使用 target-test AUROC 做模型选择。
+RAD-DINO 是质量很高的医学视觉模型，但其主要预训练域是胸片，并且架构是 DINOv2 ViT-B/14。
 
-## 推荐论文主结果组织
+如果拿它直接与 DINOv3 ViT-S/16 比较，会同时改变：
 
-1. Medical target main result: RAD-DINO on all BMAD modalities
-2. General-pretraining controlled comparison: DINOv3 ViT-S
-3. Domain-group analysis: radiology (Brain MRI/Liver CT/Chest X-ray) vs non-radiology (OCT/Pathology)
-4. Stitchability analysis: AOSS vs real zero-shot AUROC, medical vs general
-5. Efficiency: parameters, active tail blocks, GFLOPs, latency, VRAM
+- 预训练域；
+- 模型规模；
+- patch size；
+- hidden dimension；
+- Transformer 实现。
 
-这比简单声明“医学模型更好”更有研究价值，因为结果本身可以回答医学域预训练在何种模态上改善或破坏 cross-architecture compatibility。
+这会削弱“医学预训练本身是否改善 stitching”的因果解释。
+
+RAD-DINO 更适合作为后续额外 external medical backbone，而不是当前最核心的 controlled comparison。
+
+---
+
+## 为什么 RadioDINO 更适合本项目
+
+RadioDINO-S/16 与标准 DINO ViT-S/16 在主要结构上可以对齐：
+
+```text
+ViT-S/16
+224×224
+14×14 patch grid
+384 hidden dimension
+```
+
+因此可以保持：
+
+```text
+same architecture
+different pretraining domain
+```
+
+这比比较不同大小、不同 patch size 的 foundation model 更适合 model stitching 研究。
+
+---
+
+## 为什么 CNN 也改成配对 ResNet50
+
+之前使用 DINOv3 ConvNeXt-Tiny 作为 general CNN source，而医学 CNN 候选是 RadImageNet-ResNet50。
+
+这样会把：
+
+```text
+ConvNeXt vs ResNet
+```
+
+和：
+
+```text
+general vs medical pretraining
+```
+
+混在一起。
+
+当前改成：
+
+```text
+ImageNet ResNet50
+vs
+RadImageNet ResNet50
+```
+
+二者架构一致。
+
+因此整个论文可以真正组织为一个 2×2 pretraining-domain study，而不是多个不完全匹配 backbone 的经验比较。
+
+---
+
+## 当前主科学问题
+
+最终建议论文围绕：
+
+> Does domain-specific medical pretraining alter cross-architecture stitchability, and can this change be exploited as a zero-shot medical anomaly signal?
+
+展开。
+
+重点结果：
+
+1. MM / MG / GM / GG 四组 zero-shot AUROC；
+2. radiology 与 non-radiology 分组；
+3. AOSS 对真实 anomaly performance 的预测能力；
+4. source medical pretraining 的主效应；
+5. target medical pretraining 的主效应；
+6. medical-medical pairing 是否出现 interaction / synergy；
+7. 参数量、FLOPs、显存与延迟。
+
+---
+
+## 详细模型下载与目录
+
+请以仓库根目录：
+
+```text
+PREPARE_EXPERIMENT_CN.md
+```
+
+为唯一执行说明。
