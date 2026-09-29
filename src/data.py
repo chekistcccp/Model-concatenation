@@ -189,11 +189,25 @@ def data_status(cfg: dict) -> dict:
 
 
 def _find_split_dir(root: Path, split: str) -> Optional[Path]:
-    aliases = [k for k, v in SPLIT_KEYS.items() if v == split]
+    aliases = {k for k, v in SPLIT_KEYS.items() if v == split}
+
+    # Prefer the normal case first.
     for child in root.iterdir():
         if child.is_dir() and child.name.lower() in aliases:
             return child
-    return None
+
+    # Raw Google-Drive archives occasionally introduce one or more wrapper
+    # directories. Search recursively and select the nearest matching split.
+    matches = [
+        p for p in root.rglob("*")
+        if p.is_dir() and p.name.lower() in aliases
+    ]
+    if not matches:
+        return None
+    return sorted(
+        matches,
+        key=lambda p: (len(p.relative_to(root).parts), str(p)),
+    )[0]
 
 
 def _image_files(root: Path, extensions: set[str]) -> List[Path]:
