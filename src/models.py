@@ -162,7 +162,8 @@ def model_status(cfg: dict, prepare_manual: bool = True) -> dict:
                 "manual": False,
                 "repo_id": spec["repo_id"],
                 "local_dir": str(root),
-                "ready": (root / "config.json").is_file() and bool(weights),
+                "config_exists": (root / "config.json").is_file(),
+                "ready": bool(weights),
                 "weight_files": [str(p) for p in weights],
                 "note": spec.get("note", ""),
             }
@@ -208,8 +209,9 @@ def ensure_models(cfg: dict, allow_download: bool | None = None) -> dict:
         raise FileNotFoundError(
             "Manual Google Drive model is missing: "
             + ", ".join(manual_missing)
-            + ". Download RadImageNet-ResNet50 and place it exactly as described in "
-              "PREPARE_EXPERIMENT_CN.md."
+            + ". Put the original RadImageNet PyTorch archive downloaded from "
+              "Google Drive directly under model/. Do not extract or rename it. "
+              "The pipeline will unpack and locate ResNet50 automatically."
         )
 
     # Auto items: ModelScope.
