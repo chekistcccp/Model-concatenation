@@ -122,7 +122,16 @@ def run_screen(cfg: dict, config_path: str, gpus: Sequence[int]) -> None:
 def run_baselines(cfg: dict, config_path: str) -> None:
     baseline = Path(cfg["paths"]["results_dir"]) / "baselines.json"
     if baseline.exists():
-        return
+        try:
+            old = read_json(baseline)
+            expected = set(cfg["models"]["targets"])
+            found = {r.get("target_backbone") for r in old.get("rows", [])}
+            if expected.issubset(found):
+                return
+            print("[baseline] stale pre-medical baseline cache detected; rebuilding")
+            baseline.unlink()
+        except Exception:
+            baseline.unlink(missing_ok=True)
     cmd = _python_module("src.worker") + [
         "--config", config_path,
         "--mode", "baseline",
@@ -139,7 +148,12 @@ def summarize_screen(cfg: dict) -> List[dict]:
     rows = []
     for p in sorted(screen_dir.glob("*.json")):
         obj = read_json(p)
+        # Ignore pre-medical-version screening artifacts such as s2_b6.json.
+        if "target_backbone" not in obj:
+            continue
         target_name = obj["target_backbone"]
+        if target_name not in cfg["models"]["targets"]:
+            continue
         aoss = [x["aoss"] for x in obj.get("aoss_rows", []) if np.isfinite(x.get("aoss", np.nan))]
         nd = [x["normal_discrepancy"] for x in obj.get("aoss_rows", []) if np.isfinite(x.get("normal_discrepancy", np.nan))]
         radiology_aoss = [x["aoss"] for x in obj.get("aoss_rows", []) if x.get("domain_group") == "radiology" and np.isfinite(x.get("aoss", np.nan))]
