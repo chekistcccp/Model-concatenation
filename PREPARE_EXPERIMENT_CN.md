@@ -1,618 +1,526 @@
-# 实验准备说明（中文）
+# MedStitch-ZS 实验准备说明（完整中文版）
 
-本文件只回答一件事：**运行实验前，你需要准备什么，以及放到哪里。**
+> 当前版本 **不再自动下载模型**。请先手工准备 BMAD 数据和 4 个预训练权重，然后运行 `bash run.sh prepare` 检查。
 
-项目根目录假设为：
+## 1. 最终应该准备成什么样
 
-    Model-concatenation/
+项目根目录最终推荐为：
 
-最终推荐目录：
+```text
+Model-concatenation/
+├── data/
+│   └── BMAD/
+│       ├── Brain/
+│       ├── liver/
+│       ├── RESC/
+│       ├── OCT2017/
+│       ├── RSNA/
+│       └── camelyon16/
+│
+├── model/
+│   ├── radimagenet_resnet50/
+│   │   └── resnet50_torch.pt
+│   ├── imagenet_resnet50/
+│   │   └── resnet50-11ad3fa6.pth
+│   ├── radiodino_s16/
+│   │   ├── config.json
+│   │   └── model.safetensors
+│   └── dino_vits16/
+│       ├── config.json
+│       └── model.safetensors
+│
+├── cache/
+├── results/
+├── configs/
+├── src/
+└── run.sh
+```
 
-    Model-concatenation/
-    ├── data/
-    │   └── BMAD/
-    │       ├── Brain/
-    │       ├── liver/
-    │       ├── RESC/
-    │       ├── OCT2017/
-    │       ├── RSNA/
-    │       └── camelyon16/
-    │
-    ├── model/
-    │   ├── dinov3_convnext_tiny/
-    │   ├── rad_dino/
-    │   └── dinov3_vits16/
-    │
-    ├── cache/
-    ├── results/
-    ├── configs/
-    ├── src/
-    └── run.sh
-
----
-
-## 一、你必须准备的数据：BMAD
-
-本项目只需要准备 **一套 BMAD 整合数据**。
-
-需要的六个 BMAD 子集：
-
-1. Brain
-2. liver
-3. RESC
-4. OCT2017
-5. RSNA
-6. camelyon16
-
-推荐全部放在：
-
-    data/BMAD/
-
-因此完整目录应为：
-
-    data/BMAD/Brain/
-    data/BMAD/liver/
-    data/BMAD/RESC/
-    data/BMAD/OCT2017/
-    data/BMAD/RSNA/
-    data/BMAD/camelyon16/
-
-代码优先使用这个目录。
-
-为了兼容旧数据，如果你已经把它们直接放在：
-
-    data/Brain/
-    data/liver/
-    ...
-
-代码也仍然可以递归识别，但新实验建议统一使用 data/BMAD/。
+四个模型全部准备好后，代码完全离线运行，不会再访问 Hugging Face、ModelScope 或 PyTorch 下载服务器。
 
 ---
 
-## 二、BMAD 内部目录最低要求
+# 2. 数据：BMAD
 
-代码需要：
+## 2.1 官方来源
 
-- train 中的 normal/good 图像，用于 source-domain normal calibration；
-- test 中的 normal + abnormal 图像，用于最终评价；
-- 如果数据集提供 anomaly mask，则自动做 pixel-level evaluation；
-- valid 不是主实验必须项。
+BMAD 官方仓库：
 
-推荐 BMAD 风格：
+https://github.com/DorisBao/BMAD
 
-    Brain/
-    ├── train/
-    │   └── good/
-    │       └── img/
-    │           └── *.png
-    ├── valid/
-    │   ├── good/
-    │   └── Ungood/
-    └── test/
-        ├── good/
-        │   └── img/
-        │       └── *.png
-        └── Ungood/
-            ├── img/
-            │   └── *.png
-            └── anomaly_mask/
-                └── *.png
+官方整理后的数据 Google Drive：
 
-也接受没有 img/ 这一层的结构，例如：
+https://drive.google.com/drive/folders/1AC-wWZl_K18CWL2eIxUScoSOoxT4IBuw?usp=sharing
 
-    camelyon16/
-    ├── train/good/*.png
-    ├── test/good/*.png
-    └── test/Ungood/*.png
+BMAD 包含六个重组数据集，覆盖五种医学模态：
 
-正常类别目录可识别：
+- Brain：脑 MRI
+- liver：肝脏 CT
+- RESC：OCT
+- OCT2017：OCT
+- RSNA：胸片
+- camelyon16：数字病理
 
-    good
-    normal
-    healthy
+请将它们统一放在：
 
-异常类别目录可识别：
+```text
+data/BMAD/
+```
 
-    Ungood
-    bad
-    anomaly
-    anomalous
-    abnormal
-    disease
-    diseased
+即：
 
-mask 目录可识别：
+```text
+data/BMAD/Brain/
+data/BMAD/liver/
+data/BMAD/RESC/
+data/BMAD/OCT2017/
+data/BMAD/RSNA/
+data/BMAD/camelyon16/
+```
 
-    anomaly_mask
-    mask
-    masks
-    label
-    labels
-    ground_truth
-    gt
+代码仍兼容旧版直接放在 `data/` 下，但论文实验建议统一使用上述标准目录。
 
-支持图像格式：
+## 2.2 内部目录
 
-    .png
-    .jpg
-    .jpeg
-    .bmp
-    .tif
-    .tiff
+BMAD 官方常见结构例如：
 
----
+```text
+Brain/
+├── train/
+│   └── good/
+│       └── img/*.png
+├── valid/
+│   ├── good/
+│   └── Ungood/
+└── test/
+    ├── good/
+    │   └── img/*.png
+    └── Ungood/
+        ├── img/*.png
+        └── anomaly_mask/*.png
+```
 
-## 三、数据集目录别名
+Camelyon16 等只有图像级标签的数据可以是：
 
-代码会自动处理以下别名：
+```text
+camelyon16/
+├── train/good/*.png
+├── valid/good/*.png
+├── valid/Ungood/*.png
+├── test/good/*.png
+└── test/Ungood/*.png
+```
 
-    Brain        -> Brain
-    liver        -> liver
-    RESC         -> RESC
-    OCT2017      -> OCT2017
-
-胸片：
-
-    RSNA
-    Chest-RSNA
-    Chest
-
-都映射为：
-
-    RSNA
-
-病理：
-
-    camelyon16
-    camelyon16_256
-
-都映射为：
-
-    camelyon16
-
-但为了避免混淆，推荐最终统一改成：
-
-    data/BMAD/RSNA/
-    data/BMAD/camelyon16/
+无需自行重新划分 train/test。
 
 ---
 
-## 四、你需要的三个模型
+# 3. 模型 1：RadImageNet-ResNet50（医学 CNN，主 source）
 
-当前实验需要三个预训练模型。
+## 3.1 为什么用它
 
-### 模型 1：CNN source
+这是当前主实验中的医学 CNN 前端，与通用 ImageNet-ResNet50 保持相同 ResNet50 架构，只改变预训练域。
 
-用途：
+RadImageNet 官方包含约 135 万 CT、MRI、超声医学图像。
 
-    CNN front / source network
+官方仓库：
 
-ModelScope ID：
+https://github.com/BMEII-AI/RadImageNet
 
-    facebook/dinov3-convnext-tiny-pretrain-lvd1689m
+官方 PyTorch 权重：
 
-推荐目录：
+https://drive.google.com/file/d/1RHt2GnuOYlc_gcoTETtBDSW73mFyRAtR/view?usp=sharing
 
-    model/dinov3_convnext_tiny/
+## 3.2 需要准备的文件
 
-作用：
+下载官方 PyTorch 权重包，解压后找到 ResNet50 权重。
 
-- 提取 ConvNeXt stage1/stage2/stage3；
-- 与医学 Transformer / 通用 Transformer 进行跨架构 stitching；
-- 只在 feature-cache 阶段运行完整模型。
+代码期望最终文件：
 
----
+```text
+model/radimagenet_resnet50/resnet50_torch.pt
+```
 
-### 模型 2：医学 Transformer target（主实验）
+如果下载包中的 ResNet50 文件名不同，请将对应的官方 ResNet50 PyTorch 权重重命名为：
 
-用途：
+```text
+resnet50_torch.pt
+```
 
-    primary medical target
+不要转换 state_dict，不要重新保存。
 
-ModelScope ID：
-
-    microsoft/rad-dino
-
-推荐目录：
-
-    model/rad_dino/
-
-模型性质：
-
-    RAD-DINO
-    DINOv2 ViT-B/14
-    hidden dimension = 768
-    12 transformer blocks
-    medical self-supervised pretraining
-
-该模型是当前论文主实验中的医学预训练 Transformer。
+代码按照 RadImageNet 官方 PyTorch notebook 的 `Backbone(nn.Sequential(...))` 格式进行严格加载。
 
 ---
 
-### 模型 3：通用 Transformer target（控制实验）
+# 4. 模型 2：RadioDINO-S/16（医学 Transformer，主 target）
 
-用途：
+## 4.1 为什么用它
 
-    general-pretraining control
+RadioDINO-S/16 是医学域自监督 ViT-S/16：
 
-ModelScope ID：
+- ViT-Small
+- patch size = 16
+- hidden dimension = 384
+- 约 21.7M 参数
+- 在 RadImageNet 约 135 万 CT/MRI/超声图像上进行医学自监督预训练
 
-    facebook/dinov3-vits16-pretrain-lvd1689m
+这使其和通用 DINO ViT-S/16 在架构上高度匹配，适合做公平的 medical-vs-general pretraining 对照。
 
-推荐目录：
+模型主页：
 
-    model/dinov3_vits16/
+https://huggingface.co/Snarcy/RadioDino-s16
 
-模型性质：
+文件列表：
 
-    DINOv3 ViT-S/16
-    hidden dimension = 384
-    12 transformer blocks
+https://huggingface.co/Snarcy/RadioDino-s16/tree/main
 
-该模型用于和 RAD-DINO 做受控比较。
+## 4.2 需要下载的文件
 
----
+只需要手工下载：
 
-## 五、模型权重是否必须手工下载？
+```text
+config.json
+model.safetensors
+```
 
-**不必须。**
+放到：
 
-推荐方式：
+```text
+model/radiodino_s16/
+├── config.json
+└── model.safetensors
+```
 
-1. 你手工准备 BMAD；
-2. model/ 可以一开始为空；
-3. 运行：
+注意：`model.safetensors` 应该是几十 MB 级别（约 87 MB），不是几十或几百字节。
 
-       bash run.sh models
-
-代码会通过 ModelScope 自动下载缺失模型到固定目录。
-
-也可以直接：
-
-    GPUS=0,1,2,3 bash run.sh
-
-如果模型缺失，完整流程也会自动下载。
-
----
-
-## 六、如果你希望提前手工准备模型
-
-可以使用 ModelScope Python SDK：
-
-    python - <<'PY'
-    from modelscope import snapshot_download
-
-    snapshot_download(
-        "facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
-        local_dir="model/dinov3_convnext_tiny",
-    )
-
-    snapshot_download(
-        "microsoft/rad-dino",
-        local_dir="model/rad_dino",
-    )
-
-    snapshot_download(
-        "facebook/dinov3-vits16-pretrain-lvd1689m",
-        local_dir="model/dinov3_vits16",
-    )
-    PY
-
-这样之后实验全程只从本地读取模型。
+如果你通过 git clone 得到的是约 100 多字节的 Git-LFS/Xet 指针文件，说明权重并没有真正下载，必须从网页点击 Download 或使用完整的 Hugging Face 下载工具取得真实文件。
 
 ---
 
-## 七、模型目录最低完整性要求
+# 5. 模型 3：ImageNet-ResNet50（通用 CNN 对照）
 
-每个模型目录至少必须包含：
+为了让医学 CNN 与通用 CNN 保持相同架构，使用 TorchVision ResNet50 ImageNet-1K V2 权重。
 
-    config.json
+官方权重地址：
 
-以及至少一个模型权重文件，例如：
+https://download.pytorch.org/models/resnet50-11ad3fa6.pth
 
-    model.safetensors
+下载后放到：
 
-或者 safetensors 分片：
+```text
+model/imagenet_resnet50/resnet50-11ad3fa6.pth
+```
 
-    model-00001-of-000xx.safetensors
-    model-00002-of-000xx.safetensors
-    ...
+不要修改文件名。
 
-或者：
-
-    pytorch_model.bin
-
-程序现在会同时检查：
-
-1. config.json 是否存在；
-2. 是否存在 .safetensors 或 .bin 权重；
-3. 只有两者都满足才视为模型 READY。
-
-因此一个只有空目录或只下载了一半的模型不会被错误识别为已完成。
+该权重约 98 MB。
 
 ---
 
-## 八、不需要准备的模型文件
+# 6. 模型 4：DINO ViT-S/16（通用 Transformer 对照）
 
-本项目直接使用 AutoModel，不需要 tokenizer。
+使用和 RadioDINO-S/16 相同的 ViT-S/16 架构，只将预训练域改为 ImageNet。
 
-因此通常不要求：
+Hugging Face / timm 官方镜像：
 
-    tokenizer.json
-    tokenizer_config.json
-    vocab.json
-    merges.txt
+https://huggingface.co/timm/vit_small_patch16_224.dino
 
-项目也没有依赖 AutoImageProcessor，所以图像 normalization 在代码中显式完成。
+文件列表：
 
-如果 ModelScope snapshot 自动带有其他文件，可以保留，不需要删除。
+https://huggingface.co/timm/vit_small_patch16_224.dino/tree/main
+
+手工下载：
+
+```text
+config.json
+model.safetensors
+```
+
+放到：
+
+```text
+model/dino_vits16/
+├── config.json
+└── model.safetensors
+```
+
+`model.safetensors` 应约 87 MB。
 
 ---
 
-## 九、推荐准备顺序
+# 7. 为什么现在需要 4 个模型
 
-### Step 1：clone 仓库
+当前论文设计是一个 2×2 因子实验：
 
-    git clone https://github.com/chekistcccp/Model-concatenation.git
-    cd Model-concatenation
+| CNN source | Transformer target | 缩写 | 作用 |
+|---|---|---|---|
+| RadImageNet-ResNet50 | RadioDINO-S/16 | MM | 主模型：医学→医学 |
+| RadImageNet-ResNet50 | DINO ViT-S/16 | MG | 医学 CNN + 通用 Transformer |
+| ImageNet-ResNet50 | RadioDINO-S/16 | GM | 通用 CNN + 医学 Transformer |
+| ImageNet-ResNet50 | DINO ViT-S/16 | GG | 完全通用对照 |
 
-### Step 2：安装环境
+这样可以分别研究：
 
-建议 Python 3.11。
+1. CNN 前端的医学预训练是否有贡献；
+2. Transformer 后端的医学预训练是否有贡献；
+3. 两者同时医学预训练是否有协同效应；
+4. 医学预训练的收益是否只发生在 MRI/CT/X-ray，而不一定发生在 OCT/病理。
 
-先安装适合你的 CUDA / RTX 3090 的 PyTorch，然后：
+相比之前使用不同 CNN/Transformer 架构的比较，这个设计更干净。
 
-    pip install -r requirements.txt
+---
 
-### Step 3：准备 BMAD
+# 8. 代码中的 stage 定义
 
-放置为：
+两个 CNN 都是 ResNet50，因此 stitch source 完全一致：
 
-    data/BMAD/Brain/
-    data/BMAD/liver/
-    data/BMAD/RESC/
-    data/BMAD/OCT2017/
-    data/BMAD/RSNA/
-    data/BMAD/camelyon16/
+```text
+s1 = layer2: 28×28×512
+s2 = layer3: 14×14×1024
+s3 = layer4:  7× 7×2048
+```
 
-### Step 4：先检查，不下载模型
+两个 Transformer 都是 ViT-S/16：
 
-运行：
+```text
+224 / 16 = 14
+patch grid = 14×14
+hidden dimension = 384
+12 transformer blocks
+```
 
-    bash run.sh prepare
+因此最自然的拼接位置是：
+
+```text
+ResNet layer3
+14×14×1024
+       ↓
+1×1 projection / MLP
+       ↓
+14×14×384
+       ↓
+ViT tail
+```
+
+代码仍会自动筛选：
+
+```text
+source stage = 1 / 2 / 3
+target cut   = block 3 / 6 / 9
+```
+
+每个 source-target pair 共 9 个配置，四组共 36 个 screening 配置。
+
+---
+
+# 9. 第一次运行前检查
+
+环境：
+
+```bash
+pip install -r requirements.txt
+```
+
+建议 Python 3.11，并先单独安装与你 CUDA 匹配的 PyTorch。
+
+然后执行：
+
+```bash
+bash run.sh prepare
+```
+
+该步骤不会下载任何模型。
 
 它会生成：
 
-    cache/preflight_report.json
-    cache/data_audit.json
+```text
+cache/preflight_report.json
+cache/data_audit.json
+cache/model_audit.json
+```
 
-并在终端明确显示：
+终端应该最终显示：
 
-    data ready: True/False
-    models ready: True/False
+```text
+data ready:   True
+models ready: True
+```
 
-以及：
+如果缺失，会明确显示是哪一个：
 
-    missing datasets: ...
-    model source: READY/MISSING
-    model target:medical: READY/MISSING
-    model target:general: READY/MISSING
+```text
+source medical: MISSING
+source general: READY
+target medical: MISSING
+target general: READY
+```
 
-prepare 阶段不会主动下载模型。
+---
 
-### Step 5：准备模型
+# 10. 模型文件检查规则
 
-如果你没有手工准备：
+代码不只检查“文件名存在”。
 
-    bash run.sh models
+对于模型权重，必须：
 
-程序会通过 ModelScope 下载三个模型。
+- 文件存在；
+- 文件大小至少 1 MB；
+- RadioDINO / DINO 的 config.json 必须存在；
+- 实际加载时 state_dict 必须与模型结构匹配。
 
-下载后会生成：
+因此 Git-LFS 指针文件不会被误认为真实模型。
 
-    cache/model_audit.json
+RadImageNet 权重采用严格结构检查；不会使用 `strict=False` 悄悄忽略大量不匹配参数。
 
-### Step 6：再次检查
+---
 
-    bash run.sh prepare
+# 11. 推荐第一次只跑缓存
 
-理想状态：
+准备完成后：
 
-    data ready: True
-    models ready: True
+```bash
+GPUS=0 bash run.sh cache
+```
 
-此时：
+成功后应看到：
 
-    cache/preflight_report.json
+```text
+cache/features/Brain/train/
+├── source_medical_s1.npy
+├── source_medical_s2.npy
+├── source_medical_s3.npy
+├── source_general_s1.npy
+├── source_general_s2.npy
+├── source_general_s3.npy
+├── target_medical.npy
+├── target_general.npy
+└── records.jsonl
+```
 
-中的：
+这说明四个 backbone 全部加载正确。
 
-    ready_for_full_run
+---
 
-应该为：
+# 12. 正式运行
 
-    true
+4× RTX 3090：
 
-### Step 7：运行全部实验
-
-四卡：
-
-    GPUS=0,1,2,3 bash run.sh
+```bash
+GPUS=0,1,2,3 bash run.sh
+```
 
 单卡：
 
-    GPUS=0 bash run.sh
+```bash
+GPUS=0 bash run.sh
+```
+
+完整流程：
+
+```text
+prepare data manifest
+        ↓
+validate 4 manual checkpoints
+        ↓
+cache 2 CNN + 2 ViT features once
+        ↓
+36 AOSS screening configs
+        ↓
+每个 MM/MG/GM/GG pair 选 Top-1
+        ↓
+4 configs × 3 seeds final experiment
+        ↓
+post-hoc 36-point stitchability map
+        ↓
+主 MM 模型消融
+        ↓
+REPORT.md / CSV
+```
 
 ---
 
-## 十、如果服务器不能访问 ModelScope
+# 13. 加速策略
 
-提前在可联网机器执行模型下载，然后完整复制下面三个目录到实验服务器：
+四个 backbone 在每幅图上只运行一次。
 
-    model/dinov3_convnext_tiny/
-    model/rad_dino/
-    model/dinov3_vits16/
+缓存之后：
 
-在离线服务器上：
+```text
+cached ResNet stage
+        ↓
+small StitchAdapter
+        ↓
+ViT tail only
+```
 
-    AUTO_DOWNLOAD_MODELS=0 bash run.sh prepare
+不再反复运行完整 ResNet50 和完整 ViT。
 
-然后：
+四张 3090 使用 experiment-level parallelism：
 
-    AUTO_DOWNLOAD_MODELS=0 GPUS=0,1,2,3 bash run.sh
+```text
+GPU0 -> config A
+GPU1 -> config B
+GPU2 -> config C
+GPU3 -> config D
+```
 
-如果某个模型缺失，程序会直接报出缺失的具体目录，不会访问网络。
-
----
-
-## 十一、AUTO_DOWNLOAD_MODELS 参数
-
-默认：
-
-    AUTO_DOWNLOAD_MODELS=1
-
-含义：
-
-    缺少模型 -> 自动从 ModelScope 下载
-
-强制离线：
-
-    AUTO_DOWNLOAD_MODELS=0
-
-含义：
-
-    缺少模型 -> 直接报错
-
-例如：
-
-    AUTO_DOWNLOAD_MODELS=0 GPUS=0 bash run.sh cache
-
-适合模型已经提前复制到服务器的场景。
+没有 DDP/NCCL 通信开销。
 
 ---
 
-## 十二、磁盘空间建议
+# 14. 磁盘空间
 
-建议项目磁盘至少预留：
+建议至少：
 
-    100 GB
+```text
+100 GB
+```
 
 更稳妥：
 
-    150 GB
+```text
+150 GB
+```
 
-空间主要用于：
-
-1. BMAD 原始数据；
-2. 三个模型；
-3. FP16 feature cache；
-4. perturbation cache；
-5. checkpoints/results。
-
-缓存会显著减少 GPU 重复计算，因此不建议为了节省几十 GB 而关闭 feature cache。
+主要用于 BMAD、四个权重和 FP16 feature cache。
 
 ---
 
-## 十三、第一次建议不要直接跑全部实验
+# 15. 最简准备清单
 
-第一次部署建议：
+## 数据
 
-    bash run.sh prepare
+```text
+data/BMAD/
+├── Brain/
+├── liver/
+├── RESC/
+├── OCT2017/
+├── RSNA/
+└── camelyon16/
+```
 
-确认数据目录。
+## 模型
 
-然后：
+```text
+model/radimagenet_resnet50/resnet50_torch.pt
 
-    bash run.sh models
+model/imagenet_resnet50/resnet50-11ad3fa6.pth
 
-确认模型。
+model/radiodino_s16/config.json
+model/radiodino_s16/model.safetensors
 
-然后先单卡：
+model/dino_vits16/config.json
+model/dino_vits16/model.safetensors
+```
 
-    GPUS=0 bash run.sh cache
+准备完后：
 
-如果成功生成例如：
+```bash
+bash run.sh prepare
+GPUS=0 bash run.sh cache
+GPUS=0,1,2,3 bash run.sh
+```
 
-    cache/features/Brain/train/s1.npy
-    cache/features/Brain/train/s2.npy
-    cache/features/Brain/train/s3.npy
-    cache/features/Brain/train/target_medical.npy
-    cache/features/Brain/train/target_general.npy
-
-说明：
-
-- DINOv3 ConvNeXt
-- RAD-DINO
-- DINOv3 ViT
-- preprocessing
-- ModelScope/local loading
-- FP16 cache
-
-这一整条链路已经跑通。
-
-之后再：
-
-    GPUS=0,1,2,3 bash run.sh
-
-已有 cache 会自动跳过，不会重算。
-
----
-
-## 十四、最终你真正需要准备的内容
-
-最简清单：
-
-### 必须手工准备
-
-    data/BMAD/
-      Brain/
-      liver/
-      RESC/
-      OCT2017/
-      RSNA/
-      camelyon16/
-
-### 可以让程序自动准备
-
-    model/dinov3_convnext_tiny/
-    model/rad_dino/
-    model/dinov3_vits16/
-
-### 不需要手工准备
-
-    cache/
-    results/
-    logs/
-
-程序会自动创建。
-
----
-
-## 十五、准备完成后的标准目录
-
-    Model-concatenation/
-    ├── data/
-    │   └── BMAD/
-    │       ├── Brain/
-    │       ├── liver/
-    │       ├── RESC/
-    │       ├── OCT2017/
-    │       ├── RSNA/
-    │       └── camelyon16/
-    ├── model/
-    │   ├── dinov3_convnext_tiny/
-    │   │   ├── config.json
-    │   │   └── *.safetensors / *.bin
-    │   ├── rad_dino/
-    │   │   ├── config.json
-    │   │   └── *.safetensors / *.bin
-    │   └── dinov3_vits16/
-    │       ├── config.json
-    │       └── *.safetensors / *.bin
-    ├── cache/
-    ├── results/
-    └── run.sh
-
-完成这个目录之后，实验入口始终只有：
-
-    GPUS=0,1,2,3 bash run.sh
+即可。
