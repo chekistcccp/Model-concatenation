@@ -1,34 +1,40 @@
 # MedStitch-ZS / Model-concatenation
 
-本项目研究 **跨架构模型裁剪拼接（model stitching）是否可以直接形成 zero-shot medical anomaly signal**。
+本项目研究 **跨架构 model stitching 是否可以形成 zero-shot medical anomaly signal**。
 
-当前版本已改为更严格的 **2×2 医学/通用预训练对照**：
+当前版本采用严格的 2×2 预训练域对照：
 
 | CNN source | Transformer target | 角色 |
 |---|---|---|
-| RadImageNet-ResNet50 | RadioDINO-S/16 | 主模型：医学→医学 |
-| RadImageNet-ResNet50 | DINO ViT-S/16 | 医学 CNN 对照 |
-| ImageNet-ResNet50 | RadioDINO-S/16 | 医学 Transformer 对照 |
-| ImageNet-ResNet50 | DINO ViT-S/16 | 完全通用对照 |
+| RadImageNet-ResNet50 | RAD-DINO | MM：医学→医学，主模型 |
+| RadImageNet-ResNet50 | DINOv2-Base | MG |
+| ImageNet-ResNet50 | RAD-DINO | GM |
+| ImageNet-ResNet50 | DINOv2-Base | GG |
 
-CNN 两边都是 ResNet50，Transformer 两边都是 ViT-S/16，因此比上一版“不同架构同时变化”的比较更适合研究 **medical pretraining 本身对 stitchability 的影响**。
+CNN 都是 ResNet50 系列；Transformer 都是 DINOv2-Base / ViT-B14，因此可以重点分析 **medical pretraining** 而不是把架构差异混进结果。
 
-## 必看：完整中文准备说明
+## 最重要的准备规则
 
 请先阅读：
 
 **[PREPARE_EXPERIMENT_CN.md](PREPARE_EXPERIMENT_CN.md)**
 
-其中列出了：
+当前只需要你手工准备 Google Drive 上的两个项目：
 
-- BMAD 官方下载位置；
-- 4 个模型的官方来源；
-- 必须手工下载的具体文件；
-- 每个文件应放到哪个目录；
-- 如何检查 Git-LFS 假权重；
-- 第一次运行顺序。
+```text
+1. BMAD 整合数据
+2. RadImageNet PyTorch ResNet50
+```
 
-## 推荐目录
+其余模型由代码自动通过 ModelScope 下载：
+
+```text
+timm/resnet50.a1_in1k
+microsoft/rad-dino
+facebook/dinov2-base
+```
+
+## 你手工准备的目录
 
 ```text
 data/BMAD/
@@ -39,61 +45,68 @@ data/BMAD/
 ├── RSNA/
 └── camelyon16/
 
-model/
-├── radimagenet_resnet50/
-│   └── resnet50_torch.pt
-├── imagenet_resnet50/
-│   └── resnet50-11ad3fa6.pth
-├── radiodino_s16/
-│   ├── config.json
-│   └── model.safetensors
-└── dino_vits16/
-    ├── config.json
-    └── model.safetensors
+model/radimagenet_resnet50/
+└── resnet50_torch.pt
 ```
 
-当前版本 **不自动下载模型**。这样可以固定模型版本、完全离线运行，并避免服务器网络或模型仓库变化影响实验复现。
+其他 model/ 子目录不需要你创建。
 
 ## 环境
 
 推荐 Python 3.11。
 
-先安装与你 CUDA 匹配的 PyTorch，再执行：
+先安装适合你的 CUDA / RTX 3090 的 PyTorch，然后：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-依赖已经缩减为 PyTorch / torchvision / timm / safetensors 及常规科学计算库，不再要求 ModelScope 或 Transformers。
-
-## 第一步：检查准备状态
+## 1. 检查手工文件
 
 ```bash
 bash run.sh prepare
 ```
 
-会生成：
+如果只准备了 Google Drive 内容，正常状态可能是：
 
 ```text
-cache/preflight_report.json
-cache/data_audit.json
-cache/model_audit.json
+data ready: True
+models ready: False
+
+source medical: READY
+source general: MISSING (will auto-download from ModelScope)
+target medical: MISSING (will auto-download from ModelScope)
+target general: MISSING (will auto-download from ModelScope)
 ```
 
-目标状态：
+## 2. 自动下载 ModelScope 模型
+
+```bash
+bash run.sh models
+```
+
+自动保存为：
 
 ```text
-data ready:   True
+model/resnet50_a1_in1k/
+model/rad_dino/
+model/dinov2_base/
+```
+
+再次检查后应为：
+
+```text
+data ready: True
 models ready: True
 ```
 
-## 第二步：建议先单卡建立缓存
+## 3. 第一次建议单卡建立缓存
 
 ```bash
 GPUS=0 bash run.sh cache
 ```
 
-缓存会同时保存：
+缓存同时生成：
 
 ```text
 source_medical_s1/s2/s3
@@ -102,9 +115,9 @@ target_medical
 target_general
 ```
 
-四个 backbone 对每张图只运行一次。
+完整四个 backbone 对每张图只运行一次，后续 stitching 实验只读 FP16 memmap。
 
-## 第三步：一条命令完成全部实验
+## 4. 一条命令跑全部实验
 
 4× RTX 3090：
 
@@ -112,27 +125,25 @@ target_general
 GPUS=0,1,2,3 bash run.sh
 ```
 
-单卡：
+如果自动模型尚未下载，完整流程会先通过 ModelScope 补齐，再继续。
 
-```bash
-GPUS=0 bash run.sh
-```
-
-流程：
+完整流程：
 
 ```text
 BMAD audit
     ↓
-manual weight validation
+检查 RadImageNet 手工权重
     ↓
-shared FP16 feature cache
+ModelScope 自动下载 3 个模型
     ↓
-4 source-target pairs × 9 stitch points
-= 36 source-only AOSS screening jobs
+共享 FP16 feature cache
+    ↓
+4 pairs × 3 ResNet stages × 3 DINOv2 cuts
+= 36 AOSS screening configs
     ↓
 每个 pair 选 Top-1
     ↓
-4 configs × 3 seeds final experiment
+4 configs × 3 seeds final
     ↓
 36-point post-hoc stitchability map
     ↓
@@ -141,25 +152,9 @@ MM 主模型 ablation
 CSV + REPORT.md
 ```
 
-## 为什么速度仍然可控
-
-虽然从 18 个配置增加到 36 个，但最贵的完整 backbone forward 已经缓存。
-
-训练时只运行：
-
-```text
-cached ResNet stage
-    ↓
-small adapter
-    ↓
-ViT tail blocks
-```
-
-4×3090 使用 experiment-level parallelism，不使用 DDP/FSDP/NCCL。
-
 ## Stitch source
 
-两个 ResNet50 的候选 stage 完全一致：
+两个 ResNet50 的候选 stage：
 
 ```text
 s1 = layer2: 28×28×512
@@ -169,64 +164,35 @@ s3 = layer4:  7× 7×2048
 
 ## Stitch target
 
-两个 Transformer 都是 ViT-S/16：
+RAD-DINO 与 DINOv2-Base 都是 DINOv2-Base / ViT-B14：
 
 ```text
-224×224 input
-14×14 patch grid
-384 hidden dimension
-12 blocks
+input = 224×224
+patch = 14
+grid = 16×16
+hidden = 768
+12 transformer blocks
 ```
 
 候选 cut：
 
 ```text
-block 3
-block 6
-block 9
+block 3 / 6 / 9
 ```
 
-其中最自然的接口是：
-
-```text
-ResNet layer3
-14×14×1024
-    ↓
-projection + adapter
-    ↓
-14×14×384
-    ↓
-ViT tail
-```
+DINOv2 positional embedding 会根据 224 输入显式插值。
 
 ## Strict zero-shot protocol
 
 五个 modality folds：
 
-- brain_mri：Brain
-- liver_ct：liver
-- oct：RESC + OCT2017
-- chest_xray：RSNA
-- pathology：camelyon16
+- Brain MRI
+- Liver CT
+- OCT（RESC + OCT2017）
+- Chest X-ray
+- Pathology
 
-当某 modality 为 target 时：
-
-- 不使用 target train；
-- 不使用 target valid；
-- 不使用 target test 做 stitch selection；
-- AOSS 只由其余 source-domain normal + synthetic perturbation 计算；
-- 配置锁定后才读取 target test。
-
-## AOSS
-
-```text
-AOSS =
-local synthetic perturbation sensitivity
-/
-normal representation discrepancy
-```
-
-每个 MM/MG/GM/GG pair 独立排序。
+目标 modality 的 train/valid 不用于训练和选模；AOSS 只使用其他 source-domain normal images + synthetic perturbations。目标 test 只在配置锁定后评价。
 
 ## 输出
 
@@ -244,6 +210,4 @@ results/
 └── REPORT.md
 ```
 
-REPORT 会自动给出 medical/general CNN 与 medical/general Transformer 的 2×2 结果，并分别汇总 radiology 与 non-radiology。
-
-详细下载和目录说明请以 **PREPARE_EXPERIMENT_CN.md** 为准。
+详细下载地址与目录以 **PREPARE_EXPERIMENT_CN.md** 为准。
