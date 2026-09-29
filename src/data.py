@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import tarfile
@@ -54,24 +55,34 @@ def _extract_one_archive(arc: Path, target: Path) -> None:
 
 
 def auto_extract_archives(data_dir: Path) -> dict:
-    """Extract raw Google-Drive archives dropped directly in data/.
+    """Recursively extract raw Google-Drive archives dropped in data/.
 
-    Google Drive may produce one large zip or multiple zip files for a folder
-    download. Every top-level supported archive is extracted independently, and
-    dataset discovery later searches recursively across all extracted trees.
+    Supports both a single outer Google-Drive zip and nested dataset archives.
+    The user never needs to inspect or manually unpack archive contents.
     """
-    archives = [p for p in data_dir.iterdir() if p.is_file() and _is_archive(p)]
     out_root = ensure_dir(data_dir / "_extracted")
+    top_archives = sorted(
+        p for p in data_dir.iterdir() if p.is_file() and _is_archive(p)
+    )
+    queue = list(top_archives)
+    seen = set()
     extracted = []
 
-    for arc in archives:
-        target = ensure_dir(out_root / _archive_stem(arc))
+    while queue:
+        arc = queue.pop(0)
+        key = str(arc.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:10]
+        target = ensure_dir(out_root / f"{digest}_{_archive_stem(arc)}")
         marker = target / ".extract_complete"
         signature = f"{arc.stat().st_size}:{int(arc.stat().st_mtime)}"
         current = marker.read_text(encoding="utf-8").strip() if marker.exists() else None
 
         if current != signature:
-            print(f"[data] extracting raw archive {arc.name} -> {target}")
+            print(f"[data] extracting archive {arc} -> {target}")
             for child in list(target.iterdir()):
                 if child.name == ".extract_complete":
                     continue
@@ -84,8 +95,15 @@ def auto_extract_archives(data_dir: Path) -> dict:
 
         extracted.append(str(target))
 
+        # Google Drive outer zips may contain dataset archives. Unpack those too.
+        nested = sorted(
+            p for p in target.rglob("*")
+            if p.is_file() and _is_archive(p)
+        )
+        queue.extend(nested)
+
     return {
-        "archives": [str(p) for p in archives],
+        "archives": [str(p) for p in top_archives],
         "extracted": extracted,
     }
 
