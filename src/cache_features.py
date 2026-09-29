@@ -17,10 +17,6 @@ from .common import ensure_dir, load_yaml, read_jsonl, seed_everything, write_js
 from .models import extract_source_features, extract_target_features, load_source, load_target, target_grid
 
 
-SOURCE_MEAN = (0.485, 0.456, 0.406)
-SOURCE_STD = (0.229, 0.224, 0.225)
-
-
 def load_rgb_raw(path: str, size: int) -> torch.Tensor:
     with Image.open(path) as im:
         im = im.convert("RGB")
@@ -40,31 +36,21 @@ class ImagePathDataset(Dataset):
         return load_rgb_raw(self.rows[idx]["image"], self.decode_size), idx
 
 
-def _normalize_batch(x: torch.Tensor, size: int, mean, std) -> torch.Tensor:
+def _normalize(raw: torch.Tensor, spec: dict) -> torch.Tensor:
+    size = int(spec["input_size"])
+    x = raw
     if x.shape[-2:] != (size, size):
         x = F.interpolate(x, size=(size, size), mode="bicubic", align_corners=False, antialias=True)
-    mean_t = torch.tensor(mean, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
-    std_t = torch.tensor(std, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
-    return (x - mean_t) / std_t
-
-
-def _source_input(cfg: dict, raw: torch.Tensor) -> torch.Tensor:
-    return _normalize_batch(raw, int(cfg["project"]["image_size"]), SOURCE_MEAN, SOURCE_STD)
-
-
-def _target_input(cfg: dict, target_name: str, raw: torch.Tensor) -> torch.Tensor:
-    spec = cfg["models"]["targets"][target_name]
-    return _normalize_batch(
-        raw,
-        int(spec.get("input_size", cfg["project"]["image_size"])),
-        spec["normalization_mean"],
-        spec["normalization_std"],
-    )
+    if str(spec.get("channel_order", "rgb")).lower() == "bgr":
+        x = x[:, [2, 1, 0], :, :]
+    mean = torch.tensor(spec["normalization_mean"], device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
+    std = torch.tensor(spec["normalization_std"], device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
+    return (x - mean) / std
 
 
 def _decode_size(cfg: dict) -> int:
-    sizes = [int(cfg["project"]["image_size"])]
-    sizes += [int(s.get("input_size", cfg["project"]["image_size"])) for s in cfg["models"]["targets"].values()]
+    sizes = [int(s["input_size"]) for s in cfg["models"]["sources"].values()]
+    sizes += [int(s["input_size"]) for s in cfg["models"]["targets"].values()]
     return max(sizes)
 
 
@@ -95,7 +81,7 @@ def _make_perturb(raw: torch.Tensor, seed: int) -> Tuple[torch.Tensor, torch.Ten
     elif kind == 1:
         patch = out[:, y0:y1, x0:x1]
         k = 7 if min(rh, rw) >= 7 else 3
-        out[:, y0:y1, x0:x1] = TF.gaussian_blur(patch, kernel_size=[k, k], sigma=[2.0, 2.0])
+        out[:, y0:y1, x0:x1] = TF.gaussian_blur(patch, [k, k], [2.0, 2.0])
     else:
         sy = int(torch.randint(0, max(1, h - rh), (1,), generator=g))
         sx = int(torch.randint(0, max(1, w - rw), (1,), generator=g))
@@ -110,10 +96,20 @@ def _open_arrays(out_dir: Path, n: int, shapes: Dict[str, tuple], dtype=np.float
     }
 
 
-def _load_models(cfg: dict, device: torch.device):
-    source = load_source(cfg, device)
+def _load_all(cfg: dict, device: torch.device):
+    sources = {name: load_source(cfg, name, device) for name in cfg["models"]["sources"]}
     targets = {name: load_target(cfg, name, device) for name in cfg["models"]["targets"]}
-    return source, targets
+    return sources, targets
+
+
+def _expected_feature_files(cfg: dict, out_dir: Path) -> list[Path]:
+    files = []
+    for source_name in cfg["models"]["sources"]:
+        for stage in (1, 2, 3):
+            files.append(out_dir / f"source_{source_name}_s{stage}.npy")
+    for target_name in cfg["models"]["targets"]:
+        files.append(out_dir / f"target_{target_name}.npy")
+    return files
 
 
 def cache_split(cfg: dict, dataset: str, split: str, device: torch.device) -> None:
@@ -121,30 +117,20 @@ def cache_split(cfg: dict, dataset: str, split: str, device: torch.device) -> No
     rows = [r for r in manifest if r["dataset"] == dataset and r["split"] == split]
     if split == "train":
         rows = [r for r in rows if r["label"] == 0]
-        rows = _deterministic_subset(
-            rows, int(cfg["data"]["cache_train_limit_per_dataset"]), int(cfg["project"]["seed"])
-        )
+        rows = _deterministic_subset(rows, int(cfg["data"]["cache_train_limit_per_dataset"]), int(cfg["project"]["seed"]))
     if not rows:
-        print(f"[cache] skip {dataset}/{split}: no rows")
         return
 
     out_dir = ensure_dir(Path(cfg["paths"]["cache_dir"]) / "features" / dataset / split)
     done = out_dir / ".done"
-    target_cache_ok = all(
-        (out_dir / f"target_{name}.npy").exists()
-        for name in cfg["models"]["targets"]
-    )
-    if done.exists() and target_cache_ok:
+    if done.exists() and all(p.exists() for p in _expected_feature_files(cfg, out_dir)):
         print(f"[cache] reuse {dataset}/{split}")
         return
-    if done.exists() and not target_cache_ok:
-        print(f"[cache] stale cache detected for {dataset}/{split}; rebuilding")
-        done.unlink(missing_ok=True)
+    done.unlink(missing_ok=True)
 
-    source, targets = _load_models(cfg, device)
-    ds = ImagePathDataset(rows, _decode_size(cfg))
+    sources, targets = _load_all(cfg, device)
     dl = DataLoader(
-        ds,
+        ImagePathDataset(rows, _decode_size(cfg)),
         batch_size=int(cfg["cache"]["batch_size"]),
         shuffle=False,
         num_workers=int(cfg["cache"]["num_workers"]),
@@ -158,21 +144,28 @@ def cache_split(cfg: dict, dataset: str, split: str, device: torch.device) -> No
     with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
         for raw, idxs in tqdm(dl, desc=f"cache {dataset}/{split}"):
             raw = raw.to(device, non_blocking=True)
-            feats = extract_source_features(source, _source_input(cfg, raw))
+            feats = {}
+            for name, source in sources.items():
+                inp = _normalize(raw, cfg["models"]["sources"][name])
+                sf = extract_source_features(source, inp)
+                for key, value in sf.items():
+                    feats[f"source_{name}_{key}"] = value
             for name, target in targets.items():
-                feats[f"target_{name}"] = extract_target_features(target, _target_input(cfg, name, raw))
+                inp = _normalize(raw, cfg["models"]["targets"][name])
+                feats[f"target_{name}"] = extract_target_features(target, inp)
+
             if arrays is None:
                 arrays = _open_arrays(out_dir, len(rows), {k: tuple(v.shape[1:]) for k, v in feats.items()})
             ids = idxs.numpy()
             for key, value in feats.items():
                 arrays[key][ids] = value.detach().float().cpu().numpy().astype(np.float16)
 
-    if arrays is not None:
+    if arrays:
         for arr in arrays.values():
             arr.flush()
     write_jsonl(out_dir / "records.jsonl", rows)
-    done.write_text("medical+general-v2\n", encoding="utf-8")
-    del source, targets
+    done.write_text("manual-2x2-v1\n", encoding="utf-8")
+    del sources, targets
     torch.cuda.empty_cache()
 
 
@@ -182,22 +175,28 @@ def cache_perturb(cfg: dict, dataset: str, device: torch.device) -> None:
     rows = _deterministic_subset(rows, int(cfg["data"]["perturb_samples_per_dataset"]), int(cfg["project"]["seed"]) + 17)
     if not rows:
         return
+
     out_dir = ensure_dir(Path(cfg["paths"]["cache_dir"]) / "perturb" / dataset)
+    expected = []
+    for source_name in cfg["models"]["sources"]:
+        for stage in (1, 2, 3):
+            expected += [
+                out_dir / f"normal_source_{source_name}_s{stage}.npy",
+                out_dir / f"pert_source_{source_name}_s{stage}.npy",
+            ]
+    for target_name in cfg["models"]["targets"]:
+        expected += [
+            out_dir / f"normal_target_{target_name}.npy",
+            out_dir / f"pert_target_{target_name}.npy",
+            out_dir / f"mask_{target_name}.npy",
+        ]
     done = out_dir / ".done"
-    perturb_cache_ok = all(
-        (out_dir / f"normal_target_{name}.npy").exists()
-        and (out_dir / f"pert_target_{name}.npy").exists()
-        and (out_dir / f"mask_{name}.npy").exists()
-        for name in cfg["models"]["targets"]
-    )
-    if done.exists() and perturb_cache_ok:
+    if done.exists() and all(p.exists() for p in expected):
         print(f"[cache] reuse perturb {dataset}")
         return
-    if done.exists() and not perturb_cache_ok:
-        print(f"[cache] stale perturb cache detected for {dataset}; rebuilding")
-        done.unlink(missing_ok=True)
+    done.unlink(missing_ok=True)
 
-    source, targets = _load_models(cfg, device)
+    sources, targets = _load_all(cfg, device)
     normal_store = pert_store = None
     mask_stores = {}
     for name, target in targets.items():
@@ -215,41 +214,55 @@ def cache_perturb(cfg: dict, dataset: str, device: torch.device) -> None:
         normals, perts, masks = [], [], []
         for j, r in enumerate(sub):
             raw = load_rgb_raw(r["image"], decode_size)
-            p, m = _make_perturb(raw, seed=int(cfg["project"]["seed"]) + start + j)
-            normals.append(raw); perts.append(p); masks.append(m)
+            pert, mask = _make_perturb(raw, int(cfg["project"]["seed"]) + start + j)
+            normals.append(raw)
+            perts.append(pert)
+            masks.append(mask)
         n_raw = torch.stack(normals).to(device, non_blocking=True)
         p_raw = torch.stack(perts).to(device, non_blocking=True)
+
+        nf, pf = {}, {}
         with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
-            nf = extract_source_features(source, _source_input(cfg, n_raw))
-            pf = extract_source_features(source, _source_input(cfg, p_raw))
+            for name, source in sources.items():
+                n_in = _normalize(n_raw, cfg["models"]["sources"][name])
+                p_in = _normalize(p_raw, cfg["models"]["sources"][name])
+                nsrc = extract_source_features(source, n_in)
+                psrc = extract_source_features(source, p_in)
+                for key, value in nsrc.items():
+                    nf[f"source_{name}_{key}"] = value
+                for key, value in psrc.items():
+                    pf[f"source_{name}_{key}"] = value
             for name, target in targets.items():
-                nf[f"target_{name}"] = extract_target_features(target, _target_input(cfg, name, n_raw))
-                pf[f"target_{name}"] = extract_target_features(target, _target_input(cfg, name, p_raw))
+                n_in = _normalize(n_raw, cfg["models"]["targets"][name])
+                p_in = _normalize(p_raw, cfg["models"]["targets"][name])
+                nf[f"target_{name}"] = extract_target_features(target, n_in)
+                pf[f"target_{name}"] = extract_target_features(target, p_in)
+
         if normal_store is None:
             normal_store = _open_arrays(out_dir, len(rows), {f"normal_{k}": tuple(v.shape[1:]) for k, v in nf.items()})
             pert_store = _open_arrays(out_dir, len(rows), {f"pert_{k}": tuple(v.shape[1:]) for k, v in pf.items()})
+
         sl = slice(start, start + len(sub))
-        for k, v in nf.items():
-            normal_store[f"normal_{k}"][sl] = v.detach().float().cpu().numpy().astype(np.float16)
-        for k, v in pf.items():
-            pert_store[f"pert_{k}"][sl] = v.detach().float().cpu().numpy().astype(np.float16)
+        for key, value in nf.items():
+            normal_store[f"normal_{key}"][sl] = value.detach().float().cpu().numpy().astype(np.float16)
+        for key, value in pf.items():
+            pert_store[f"pert_{key}"][sl] = value.detach().float().cpu().numpy().astype(np.float16)
+
         stacked_masks = torch.stack(masks).to(device)
         for name, target in targets.items():
             g = target_grid(target, int(cfg["models"]["targets"][name]["input_size"]))
             mg = F.interpolate(stacked_masks, size=(g, g), mode="nearest").squeeze(1).cpu().numpy().astype(np.uint8)
             mask_stores[name][sl] = mg
 
-    if normal_store is not None:
-        for arr in normal_store.values():
-            arr.flush()
-    if pert_store is not None:
-        for arr in pert_store.values():
-            arr.flush()
+    for store in (normal_store, pert_store):
+        if store:
+            for arr in store.values():
+                arr.flush()
     for arr in mask_stores.values():
         arr.flush()
     write_jsonl(out_dir / "records.jsonl", rows)
-    done.write_text("medical+general-v2\n", encoding="utf-8")
-    del source, targets
+    done.write_text("manual-2x2-v1\n", encoding="utf-8")
+    del sources, targets
     torch.cuda.empty_cache()
 
 
