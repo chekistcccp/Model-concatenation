@@ -12,8 +12,45 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from .common import config_name, ensure_dir, gpu_ids, load_yaml, read_json, write_json
-from .data import prepare_manifest
-from .models import ensure_models
+from .data import data_status, prepare_manifest
+from .models import ensure_models, model_status
+
+
+
+
+def run_preflight(cfg: dict) -> dict:
+    """Inspect required datasets/models without downloading model weights."""
+    data_error = None
+    try:
+        # Also performs optional top-level archive extraction before inspection.
+        prepare_manifest(cfg)
+    except Exception as exc:
+        data_error = str(exc)
+
+    report = {
+        "data": data_status(cfg),
+        "models": model_status(cfg),
+    }
+    report["data"]["error"] = data_error
+    report["models_ready"] = all(
+        item["ready"] for item in report["models"].values()
+    )
+    report["ready_for_full_run"] = bool(
+        report["data"]["ready"] and report["models_ready"]
+    )
+    out = Path(cfg["paths"]["cache_dir"]) / "preflight_report.json"
+    write_json(out, report)
+
+    print("\n[prepare] experiment preparation report")
+    print(f"  data ready:   {report['data']['ready']}")
+    print(f"  models ready: {report['models_ready']}")
+    if report["data"]["missing"]:
+        print("  missing datasets: " + ", ".join(report["data"]["missing"]))
+    for key, item in report["models"].items():
+        state = "READY" if item["ready"] else "MISSING"
+        print(f"  model {key}: {state} -> {item['local_dir']}")
+    print(f"  full report: {out}")
+    return report
 
 
 def _run_parallel(base_cmds: List[List[str]], gpus: Sequence[int], tag: str) -> None:
@@ -415,7 +452,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument(
         "--stage", default="all",
-        choices=["all", "prepare", "cache", "screen", "final", "stitchmap", "ablation", "report"],
+        choices=["all", "prepare", "models", "cache", "screen", "final", "stitchmap", "ablation", "report"],
     )
     args = ap.parse_args()
     cfg = load_yaml(args.config)
@@ -425,11 +462,20 @@ def main():
     gpus = gpu_ids(int(cfg["project"].get("max_gpus", 4)))
     print(f"[runtime] GPUs: {gpus}")
 
-    if args.stage in ("all", "prepare"):
+    if args.stage == "prepare":
+        run_preflight(cfg)
+        return
+
+    if args.stage == "models":
+        ensure_models(cfg, allow_download=True)
+        run_preflight(cfg)
+        return
+
+    if args.stage == "all":
         prepare_manifest(cfg)
-        if args.stage == "prepare":
-            return
-    elif args.stage != "report" and not (Path(cfg["paths"]["cache_dir"]) / "manifest.jsonl").exists():
+    elif args.stage != "report" and not (
+        Path(cfg["paths"]["cache_dir"]) / "manifest.jsonl"
+    ).exists():
         prepare_manifest(cfg)
 
     if args.stage != "report":
