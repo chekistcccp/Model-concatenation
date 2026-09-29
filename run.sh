@@ -8,8 +8,6 @@ export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
 
 CONFIG="${CONFIG:-configs/experiment.yaml}"
 STAGE="${1:-all}"
@@ -19,8 +17,8 @@ mkdir -p data model cache results logs
 python - <<'PY'
 import importlib.util, sys
 required = [
-    "torch", "torchvision", "timm", "safetensors",
-    "numpy", "scipy", "sklearn", "yaml", "PIL"
+    "torch", "torchvision", "timm", "transformers", "modelscope",
+    "safetensors", "numpy", "scipy", "sklearn", "yaml", "PIL"
 ]
 missing = [m for m in required if importlib.util.find_spec(m) is None]
 if missing:
