@@ -46,7 +46,13 @@ def run_preflight(cfg: dict) -> dict:
         print("  missing datasets: " + ", ".join(report["data"]["missing"]))
     for group in ("sources", "targets"):
         for name, item in mstatus[group].items():
-            print(f"  {group[:-1]} {name}: {'READY' if item['ready'] else 'MISSING'}")
+            if item["ready"]:
+                state = "READY"
+            elif item.get("manual", False):
+                state = "MISSING (manual Google Drive)"
+            else:
+                state = "MISSING (will auto-download from ModelScope)"
+            print(f"  {group[:-1]} {name}: {state}")
     print(f"  report: {out}")
     print("  guide:  PREPARE_EXPERIMENT_CN.md")
     return report
