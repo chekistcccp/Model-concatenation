@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tarfile
@@ -60,27 +61,42 @@ def prepare_manual_model_archives(cfg: dict) -> dict:
     model_root = ensure_dir(Path(cfg["paths"]["model_dir"]))
     extract_root = ensure_dir(model_root / "_manual_extracted")
 
-    archives = [
+    archives = sorted(
         p for p in model_root.iterdir()
         if p.is_file() and _is_archive(p)
-    ]
+    )
+    queue = list(archives)
+    seen = set()
     extracted = []
-    for arc in archives:
-        target = ensure_dir(extract_root / _archive_stem(arc))
+    while queue:
+        arc = queue.pop(0)
+        key = str(arc.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:10]
+        target = ensure_dir(extract_root / f"{digest}_{_archive_stem(arc)}")
         marker = target / ".extract_complete"
         signature = f"{arc.stat().st_size}:{int(arc.stat().st_mtime)}"
         if not marker.exists() or marker.read_text(encoding="utf-8").strip() != signature:
-            print(f"[model] extracting manual archive {arc.name} -> {target}")
-            if target.exists():
-                for child in target.iterdir():
-                    if child.name != ".extract_complete":
-                        if child.is_dir():
-                            shutil.rmtree(child)
-                        else:
-                            child.unlink()
+            print(f"[model] extracting manual archive {arc} -> {target}")
+            for child in list(target.iterdir()):
+                if child.name == ".extract_complete":
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
             _extract_archive(arc, target)
             marker.write_text(signature + "\n", encoding="utf-8")
         extracted.append(str(target))
+
+        nested = sorted(
+            p for p in target.rglob("*")
+            if p.is_file() and _is_archive(p)
+        )
+        queue.extend(nested)
 
     medical = cfg["models"]["sources"]["medical"]
     canonical = Path(medical["checkpoint"])
