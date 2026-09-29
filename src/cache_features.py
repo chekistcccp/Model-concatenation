@@ -130,9 +130,16 @@ def cache_split(cfg: dict, dataset: str, split: str, device: torch.device) -> No
 
     out_dir = ensure_dir(Path(cfg["paths"]["cache_dir"]) / "features" / dataset / split)
     done = out_dir / ".done"
-    if done.exists():
+    target_cache_ok = all(
+        (out_dir / f"target_{name}.npy").exists()
+        for name in cfg["models"]["targets"]
+    )
+    if done.exists() and target_cache_ok:
         print(f"[cache] reuse {dataset}/{split}")
         return
+    if done.exists() and not target_cache_ok:
+        print(f"[cache] stale cache detected for {dataset}/{split}; rebuilding")
+        done.unlink(missing_ok=True)
 
     source, targets = _load_models(cfg, device)
     ds = ImagePathDataset(rows, _decode_size(cfg))
@@ -177,9 +184,18 @@ def cache_perturb(cfg: dict, dataset: str, device: torch.device) -> None:
         return
     out_dir = ensure_dir(Path(cfg["paths"]["cache_dir"]) / "perturb" / dataset)
     done = out_dir / ".done"
-    if done.exists():
+    perturb_cache_ok = all(
+        (out_dir / f"normal_target_{name}.npy").exists()
+        and (out_dir / f"pert_target_{name}.npy").exists()
+        and (out_dir / f"mask_{name}.npy").exists()
+        for name in cfg["models"]["targets"]
+    )
+    if done.exists() and perturb_cache_ok:
         print(f"[cache] reuse perturb {dataset}")
         return
+    if done.exists() and not perturb_cache_ok:
+        print(f"[cache] stale perturb cache detected for {dataset}; rebuilding")
+        done.unlink(missing_ok=True)
 
     source, targets = _load_models(cfg, device)
     normal_store = pert_store = None
