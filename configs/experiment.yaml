@@ -13,60 +13,62 @@ paths:
   results_dir: results
 
 models:
-  # All four checkpoints are prepared manually for reproducibility/offline use.
-  manual_only: true
+  auto_download_missing: true
   primary_source: medical
   primary_target: medical
 
-  # Same CNN architecture, different pretraining domain.
+  # CNN: same ResNet50 family, medical vs general pretraining.
   sources:
     medical:
       kind: radimagenet_resnet50
+      manual: true
       checkpoint: model/radimagenet_resnet50/resnet50_torch.pt
       input_size: 224
       channel_order: bgr
       normalization_mean: [0.5, 0.5, 0.5]
       normalization_std: [0.5, 0.5, 0.5]
       stage_channels: [512, 1024, 2048]
-      note: "RadImageNet supervised ResNet50; official PyTorch backbone weights"
+      note: "MANUAL: official RadImageNet ResNet50 from Google Drive"
     general:
-      kind: imagenet_resnet50
-      checkpoint: model/imagenet_resnet50/resnet50-11ad3fa6.pth
+      kind: timm_resnet50
+      manual: false
+      repo_id: timm/resnet50.a1_in1k
+      local: model/resnet50_a1_in1k
+      architecture: resnet50.a1_in1k
       input_size: 224
       channel_order: rgb
       normalization_mean: [0.485, 0.456, 0.406]
       normalization_std: [0.229, 0.224, 0.225]
       stage_channels: [512, 1024, 2048]
-      note: "TorchVision ImageNet-1K V2 ResNet50 control"
+      note: "AUTO: ModelScope ImageNet-1K ResNet50 A1 control"
 
-  # Same Transformer architecture, different pretraining domain.
+  # Transformer: same DINOv2-Base / ViT-B14 family, medical vs general pretraining.
   targets:
     medical:
-      kind: timm_vit
-      architecture: vit_small_patch16_224
-      directory: model/radiodino_s16
-      config: model/radiodino_s16/config.json
-      checkpoint: model/radiodino_s16/model.safetensors
+      kind: dinov2_hf
+      manual: false
+      repo_id: microsoft/rad-dino
+      local: model/rad_dino
       input_size: 224
-      patch_size: 16
-      hidden_dim: 384
-      normalization_mean: [0.485, 0.456, 0.406]
-      normalization_std: [0.229, 0.224, 0.225]
-      note: "RadioDINO-S/16; RadImageNet medical self-supervised ViT-S/16"
+      native_training_size: 518
+      patch_size: 14
+      hidden_dim: 768
+      normalization_mean: [0.5307, 0.5307, 0.5307]
+      normalization_std: [0.2583, 0.2583, 0.2583]
+      note: "AUTO: ModelScope RAD-DINO medical DINOv2-Base"
     general:
-      kind: timm_vit
-      architecture: vit_small_patch16_224
-      directory: model/dino_vits16
-      config: model/dino_vits16/config.json
-      checkpoint: model/dino_vits16/model.safetensors
+      kind: dinov2_hf
+      manual: false
+      repo_id: facebook/dinov2-base
+      local: model/dinov2_base
       input_size: 224
-      patch_size: 16
-      hidden_dim: 384
+      native_training_size: 518
+      patch_size: 14
+      hidden_dim: 768
       normalization_mean: [0.485, 0.456, 0.406]
       normalization_std: [0.229, 0.224, 0.225]
-      note: "ImageNet DINO ViT-S/16 control"
+      note: "AUTO: ModelScope DINOv2-Base general control"
 
-  # 2x2 factorial design: source-domain pretraining x target-domain pretraining.
   pairs:
     - [medical, medical]
     - [medical, general]
@@ -89,7 +91,7 @@ data:
   extensions: [.png, .jpg, .jpeg, .bmp, .tif, .tiff]
 
 cache:
-  batch_size: 48
+  batch_size: 32
   num_workers: 4
   prefetch_factor: 3
 
@@ -99,19 +101,18 @@ screen:
   seed: 11
   n_per_source_modality: 500
   epochs: 4
-  batch_size: 96
+  batch_size: 64
   lr: 0.002
   weight_decay: 0.0001
   adapter: mlp
   topk_fraction: 0.05
 
 final:
-  # One AOSS-selected stitch point per pretraining pair minimizes wall-clock time.
   top_configs_per_pair: 1
   seeds: [11, 22, 33]
   n_per_source_modality: 1000
   epochs: 8
-  batch_size: 96
+  batch_size: 64
   lr: 0.001
   weight_decay: 0.0001
   adapter: mlp
@@ -126,7 +127,7 @@ ablation:
   adapter_types: [linear, mlp]
   score_modes: [raw_topk, contrast_topk, robust_topk]
   epochs: 6
-  batch_size: 96
+  batch_size: 64
   lr: 0.001
   weight_decay: 0.0001
 
