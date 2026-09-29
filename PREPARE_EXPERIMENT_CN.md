@@ -1,55 +1,24 @@
-# MedStitch-ZS 实验准备说明（Google Drive 手动 + ModelScope 自动）
+# MedStitch-ZS 实验准备说明（只放原始压缩包）
 
-本版本的准备规则非常简单：
+这版代码已经按你的要求改成：
 
-> **Google Drive 上必须手动下载的内容由你准备；其余预训练模型全部由代码通过 ModelScope 自动下载。**
-
-因此你实际只需要手工准备 **BMAD 数据** 和 **RadImageNet-ResNet50 权重**。
+> **你只负责把 Google Drive 下载下来的原始压缩包放到 `data/` 和 `model/` 根目录。不要解压、不要改名、不要手工整理。其余模型全部由代码通过 ModelScope 自动下载。**
 
 ---
 
-# 1. 最终目录
+# 1. 你真正需要手工下载的只有两类
 
-推荐最终目录：
-
-```text
-Model-concatenation/
-├── data/
-│   └── BMAD/
-│       ├── Brain/
-│       ├── liver/
-│       ├── RESC/
-│       ├── OCT2017/
-│       ├── RSNA/
-│       └── camelyon16/
-│
-├── model/
-│   ├── radimagenet_resnet50/
-│   │   └── resnet50_torch.pt          # 你手工放
-│   ├── resnet50_a1_in1k/              # ModelScope 自动下载
-│   ├── rad_dino/                       # ModelScope 自动下载
-│   └── dinov2_base/                    # ModelScope 自动下载
-│
-├── cache/
-├── results/
-└── run.sh
-```
-
----
-
-# 2. 你必须手工下载的内容
-
-## 2.1 BMAD 整合数据 —— Google Drive
+## 1.1 BMAD 数据 —— Google Drive
 
 BMAD 官方仓库：
 
 https://github.com/DorisBao/BMAD
 
-BMAD 官方 README 提供的 Google Drive：
+官方整理后的数据 Google Drive：
 
 https://drive.google.com/drive/folders/1AC-wWZl_K18CWL2eIxUScoSOoxT4IBuw?usp=sharing
 
-下载其中整理好的六个数据集：
+BMAD 官方说明显示该 benchmark 包含六个重组数据集：
 
 ```text
 Brain
@@ -60,77 +29,131 @@ RSNA
 camelyon16
 ```
 
-放到：
+覆盖：
+
+- Brain MRI
+- Liver CT
+- Retinal OCT
+- Chest X-ray
+- Digital histopathology
+
+### 你要做什么
+
+从 Google Drive 下载 BMAD 后，无论浏览器最终给你一个 zip，还是多个 zip，都直接放进：
 
 ```text
-data/BMAD/
+data/
 ```
 
-最终：
+例如：
 
 ```text
-data/BMAD/Brain/
-data/BMAD/liver/
-data/BMAD/RESC/
-data/BMAD/OCT2017/
-data/BMAD/RSNA/
-data/BMAD/camelyon16/
+data/
+├── BMAD.zip
 ```
 
-这六个数据集覆盖：
+或者 Google Drive 把大文件夹拆成多个压缩包：
 
-- Brain：脑 MRI
-- liver：肝 CT
-- RESC：OCT
-- OCT2017：OCT
-- RSNA：胸片
-- camelyon16：病理
+```text
+data/
+├── BMAD-001.zip
+├── BMAD-002.zip
+├── BMAD-003.zip
+└── ...
+```
 
-不需要下载 BMAD 官方训练好的 14 个 anomaly detection checkpoint。
+**不要解压。**
+
+**不要手工建立 `data/BMAD/`。**
+
+**不要修改压缩包文件名。**
+
+程序会自动：
+
+```text
+data/*.zip / *.tar / *.tar.gz / *.tgz / *.tar.bz2 / *.tbz2
+        ↓
+data/_extracted/
+        ↓
+递归搜索
+        ↓
+Brain / liver / RESC / OCT2017 / RSNA / camelyon16
+        ↓
+生成 cache/manifest.jsonl
+```
+
+如果压缩包内部还有额外的 Google Drive 外层目录也没有关系，代码递归识别。
 
 ---
 
-## 2.2 RadImageNet-ResNet50 —— Google Drive
+## 1.2 RadImageNet PyTorch 模型包 —— Google Drive
 
 RadImageNet 官方仓库：
 
 https://github.com/BMEII-AI/RadImageNet
 
-官方 README 中的 PyTorch pretrained models：
+官方 PyTorch pretrained models Google Drive：
 
 https://drive.google.com/file/d/1RHt2GnuOYlc_gcoTETtBDSW73mFyRAtR/view?usp=sharing
 
-下载 PyTorch 模型包并解压。
+RadImageNet 官方提供：
 
-本项目需要其中的：
+- ResNet50
+- DenseNet121
+- InceptionResNetV2
+- InceptionV3
+
+本项目只使用其中的 **ResNet50**。
+
+### 你要做什么
+
+把从 Google Drive 下载到的原始 PyTorch 模型压缩包直接放进：
 
 ```text
-resnet50_torch.pt
+model/
 ```
 
-最终放置为：
+例如：
 
 ```text
+model/
+└── <Google Drive 原始下载文件>.zip
+```
+
+文件名是什么都不重要。
+
+**不要解压。**
+
+**不要手工寻找 resnet50_torch.pt。**
+
+**不要重命名。**
+
+代码会自动：
+
+```text
+model/*.zip / *.tar / *.tar.gz / *.tgz / *.tar.bz2 / *.tbz2
+        ↓
+model/_manual_extracted/
+        ↓
+递归查找 resnet50_torch.pt
+        ↓
+如果没有精确文件名，则查找名称含 resnet50 的 .pt/.pth
+        ↓
+自动生成规范路径
 model/radimagenet_resnet50/resnet50_torch.pt
 ```
 
-这是唯一需要你手工准备的模型权重。
+生成规范文件时优先使用硬链接；如果文件系统不允许硬链接，则自动复制。
 
-如果下载包中的 ResNet50 文件已经叫 `resnet50_torch.pt`，直接复制即可；不要重新转换 state_dict。
-
-代码会按 RadImageNet 官方 PyTorch notebook 的 Backbone 格式严格加载。
+因此你不需要知道 Google Drive 包内部的目录结构。
 
 ---
 
-# 3. 不需要你手工下载的模型
+# 2. 不需要你手工下载的三个模型
 
-下面三个模型都由代码通过 ModelScope SDK 自动下载。
+下面三个模型代码会自动通过 ModelScope 下载。
 
-只要服务器可以访问 ModelScope 即可。
-
----
-
-## 3.1 通用 CNN：ImageNet ResNet50
+## 2.1 通用 CNN
 
 ModelScope ID：
 
@@ -138,33 +161,19 @@ ModelScope ID：
 timm/resnet50.a1_in1k
 ```
 
-ModelScope：
-
-https://modelscope.cn/models/timm/resnet50.a1_in1k
-
 自动保存到：
 
 ```text
 model/resnet50_a1_in1k/
 ```
 
-用途：
+ModelScope：
 
-```text
-general CNN source
-```
-
-它和 RadImageNet source 都属于 ResNet50 系列，输出 stage 维度统一为：
-
-```text
-s1 = layer2: 28×28×512
-s2 = layer3: 14×14×1024
-s3 = layer4:  7× 7×2048
-```
+https://modelscope.cn/models/timm/resnet50.a1_in1k
 
 ---
 
-## 3.2 医学 Transformer：RAD-DINO
+## 2.2 医学 Transformer
 
 ModelScope ID：
 
@@ -172,36 +181,25 @@ ModelScope ID：
 microsoft/rad-dino
 ```
 
-ModelScope：
-
-https://modelscope.cn/models/microsoft/rad-dino
-
 自动保存到：
 
 ```text
 model/rad_dino/
 ```
 
+ModelScope：
+
+https://modelscope.cn/models/microsoft/rad-dino
+
 用途：
 
 ```text
-medical Transformer target
+medical DINOv2-Base target
 ```
-
-架构：
-
-```text
-DINOv2-Base / ViT-B/14
-hidden dimension = 768
-12 blocks
-patch size = 14
-```
-
-RAD-DINO 是医学自监督视觉模型，主要预训练于胸部 X-ray。
 
 ---
 
-## 3.3 通用 Transformer：DINOv2-Base
+## 2.3 通用 Transformer
 
 ModelScope ID：
 
@@ -209,110 +207,85 @@ ModelScope ID：
 facebook/dinov2-base
 ```
 
-ModelScope：
-
-https://modelscope.cn/models/facebook/dinov2-base
-
 自动保存到：
 
 ```text
 model/dinov2_base/
 ```
 
+ModelScope：
+
+https://modelscope.cn/models/facebook/dinov2-base
+
 用途：
 
 ```text
-general Transformer target
+general DINOv2-Base target
 ```
 
-它和 RAD-DINO 使用相同的 DINOv2-Base / ViT-B14 架构，因此可以形成更严格的：
+---
+
+# 3. 因此你开始实验前只需要这样
+
+仓库目录：
 
 ```text
-same architecture
-different pretraining domain
+Model-concatenation/
+├── data/
+│   ├── <BMAD Google Drive 原始压缩包 1>.zip
+│   ├── <BMAD Google Drive 原始压缩包 2>.zip   # 如果 Google Drive 拆包
+│   └── ...
+│
+├── model/
+│   └── <RadImageNet Google Drive 原始 PyTorch 压缩包>.zip
+│
+├── cache/
+├── results/
+└── run.sh
 ```
 
-对照。
+就够了。
 
----
-
-# 4. 当前 2×2 实验设计
-
-最终四组：
-
-| CNN source | Transformer target | 缩写 | 作用 |
-|---|---|---|---|
-| RadImageNet-ResNet50 | RAD-DINO | MM | 主模型：医学→医学 |
-| RadImageNet-ResNet50 | DINOv2-Base | MG | 医学 CNN + 通用 ViT |
-| ImageNet-ResNet50 | RAD-DINO | GM | 通用 CNN + 医学 ViT |
-| ImageNet-ResNet50 | DINOv2-Base | GG | 通用→通用 |
-
-这样可以分别研究：
-
-1. CNN 前端医学预训练是否有效；
-2. Transformer 后端医学预训练是否有效；
-3. 医学→医学是否存在额外协同；
-4. 收益是否集中在 MRI / CT / X-ray，而在 OCT / Pathology 上不同。
-
----
-
-# 5. 你真正需要手工准备的最简清单
-
-只需要：
+你不需要提前得到：
 
 ```text
 data/BMAD/
-├── Brain/
-├── liver/
-├── RESC/
-├── OCT2017/
-├── RSNA/
-└── camelyon16/
-
 model/radimagenet_resnet50/
-└── resnet50_torch.pt
+model/rad_dino/
+model/dinov2_base/
+model/resnet50_a1_in1k/
 ```
 
-除此之外的三个模型不要手工下载。
+这些目录都由程序产生或自动下载。
 
 ---
 
-# 6. 安装环境
+# 4. 第一次运行
 
-建议 Python 3.11。
-
-先安装与你 CUDA 匹配的 PyTorch，然后：
+安装环境：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-依赖中包含：
+推荐 Python 3.11，并先安装与你 CUDA 匹配的 PyTorch。
 
-```text
-modelscope
-transformers
-timm
-safetensors
-```
-
----
-
-# 7. 第一步：只检查你手工准备得对不对
-
-执行：
+然后：
 
 ```bash
 bash run.sh prepare
 ```
 
-这个阶段不会主动下载 ModelScope 模型。
+这一步会：
 
-它会检查：
-
-- BMAD 六个目录是否存在；
-- RadImageNet `resnet50_torch.pt` 是否存在且不是空文件；
-- 三个自动模型当前是否已经存在。
+1. 扫描 `data/` 原始压缩包；
+2. 自动解压 BMAD；
+3. 自动定位六个数据集；
+4. 扫描 `model/` 原始压缩包；
+5. 自动解压 RadImageNet；
+6. 自动定位 ResNet50 权重；
+7. 不下载 ModelScope 模型；
+8. 输出准备报告。
 
 生成：
 
@@ -321,31 +294,29 @@ cache/preflight_report.json
 cache/data_audit.json
 ```
 
-如果你刚 clone 仓库，正常可能看到：
+如果 Google Drive 两个内容都放对了，而 ModelScope 模型还没下载，正常应该类似：
 
 ```text
 data ready: True
 models ready: False
 
 source medical: READY
-source general: MISSING
-target medical: MISSING
-target general: MISSING
+source general: MISSING (will auto-download from ModelScope)
+target medical: MISSING (will auto-download from ModelScope)
+target general: MISSING (will auto-download from ModelScope)
 ```
-
-这并不是错误，因为后三个模型本来就应该自动下载。
 
 ---
 
-# 8. 第二步：自动下载 ModelScope 模型
+# 5. 自动下载 ModelScope 模型
 
-确认 BMAD + RadImageNet 已准备好后：
+执行：
 
 ```bash
 bash run.sh models
 ```
 
-代码会自动下载：
+自动下载：
 
 ```text
 timm/resnet50.a1_in1k
@@ -353,7 +324,7 @@ microsoft/rad-dino
 facebook/dinov2-base
 ```
 
-分别保存到：
+保存到：
 
 ```text
 model/resnet50_a1_in1k/
@@ -361,15 +332,7 @@ model/rad_dino/
 model/dinov2_base/
 ```
 
-下载后生成：
-
-```text
-cache/model_audit.json
-```
-
-并再次执行准备检查。
-
-理想状态：
+完成后：
 
 ```text
 data ready: True
@@ -379,157 +342,147 @@ ready_for_full_run: true
 
 ---
 
-# 9. 也可以直接运行完整实验
+# 6. 也可以跳过 models 步骤
 
-如果 BMAD 和 RadImageNet 已准备好，你不必单独执行 models：
+只要你已经把两个 Google Drive 原始包分别放入：
+
+```text
+data/
+model/
+```
+
+就可以直接：
 
 ```bash
 GPUS=0,1,2,3 bash run.sh
 ```
 
-完整流程发现自动模型缺失时，会先使用 ModelScope 下载，然后继续实验。
-
----
-
-# 10. 第一次推荐先单卡跑 cache
-
-建议：
-
-```bash
-GPUS=0 bash run.sh cache
-```
-
-成功后应看到类似：
+程序会按顺序：
 
 ```text
-cache/features/Brain/train/
-├── source_medical_s1.npy
-├── source_medical_s2.npy
-├── source_medical_s3.npy
-├── source_general_s1.npy
-├── source_general_s2.npy
-├── source_general_s3.npy
-├── target_medical.npy
-├── target_general.npy
-└── records.jsonl
-```
-
-这里：
-
-```text
-source_medical = RadImageNet-ResNet50
-source_general = ModelScope ImageNet-ResNet50
-target_medical = ModelScope RAD-DINO
-target_general = ModelScope DINOv2-Base
-```
-
-一旦 cache 成功，后面 36 个 stitch screening 配置不会再重复运行完整四个 backbone。
-
----
-
-# 11. 正式四卡运行
-
-```bash
-GPUS=0,1,2,3 bash run.sh
-```
-
-主要流程：
-
-```text
-BMAD audit
-      ↓
-检查手工 RadImageNet
-      ↓
-ModelScope 自动补齐 3 个模型
-      ↓
-共享 FP16 feature cache
-      ↓
-MM / MG / GM / GG
-×
-3 source stages
-×
-3 target cuts
-=
-36 AOSS screening jobs
-      ↓
-每个 pair 选 Top-1
-      ↓
-4 configs × 3 seeds
-      ↓
-post-hoc stitchability map
-      ↓
-MM 消融
-      ↓
-REPORT.md
+自动解压 BMAD
+       ↓
+自动解压 RadImageNet
+       ↓
+自动定位 RadImageNet ResNet50
+       ↓
+ModelScope 自动下载其余三个模型
+       ↓
+建立 feature cache
+       ↓
+执行全部实验
 ```
 
 ---
 
-# 12. 分辨率说明
+# 7. 推荐第一次仍然分三步
 
-RAD-DINO 和 DINOv2-Base 都是 patch14。
-
-为了节省 RTX 3090 实验时间，默认输入：
-
-```text
-224×224
-```
-
-所以：
-
-```text
-224 / 14 = 16
-16×16 = 256 patch tokens
-```
-
-两套 target 使用相同 token grid。
-
-原始 DINOv2/RAD-DINO 可使用更大输入，代码通过 DINOv2 positional embedding interpolation 支持 224 输入。
-
-建议第一轮全部使用 224；如果核心结果成立，再对最佳 MM 配置补高分辨率消融。
-
----
-
-# 13. 下载失败时怎么处理
-
-如果 ModelScope 访问失败，不需要重新下载 Google Drive 数据。
-
-只需再次：
-
-```bash
-bash run.sh models
-```
-
-已经完整存在的模型会跳过，缺失模型继续下载。
-
-模型统一保存在项目自己的 `model/`，不会依赖用户 home 目录里的随机缓存位置。
-
----
-
-# 14. 一句话版本
-
-你手动准备：
-
-```text
-Google Drive:
-1. BMAD
-2. RadImageNet PyTorch ResNet50
-```
-
-代码自动准备：
-
-```text
-ModelScope:
-1. timm/resnet50.a1_in1k
-2. microsoft/rad-dino
-3. facebook/dinov2-base
-```
-
-然后：
+最稳妥：
 
 ```bash
 bash run.sh prepare
 bash run.sh models
 GPUS=0 bash run.sh cache
+```
+
+如果 cache 成功，再：
+
+```bash
 GPUS=0,1,2,3 bash run.sh
 ```
+
+---
+
+# 8. 自动产生的目录
+
+数据：
+
+```text
+data/
+├── 你下载的原始压缩包
+└── _extracted/
+    └── ...
+```
+
+模型：
+
+```text
+model/
+├── 你下载的 RadImageNet 原始压缩包
+├── _manual_extracted/
+│   └── ...
+├── radimagenet_resnet50/
+│   └── resnet50_torch.pt
+├── resnet50_a1_in1k/
+├── rad_dino/
+└── dinov2_base/
+```
+
+不要删除原始压缩包。
+
+后续重复运行时，程序通过压缩包大小和修改时间识别是否已经完成解压，不会每次重复解压。
+
+---
+
+# 9. 支持的原始压缩包格式
+
+当前自动解压支持：
+
+```text
+.zip
+.tar
+.tar.gz
+.tgz
+.tar.bz2
+.tbz2
+```
+
+Google Drive 浏览器下载文件夹通常会生成 zip，因此 BMAD 可以直接使用浏览器下载结果。
+
+---
+
+# 10. 当前实验模型
+
+四组 2×2：
+
+| CNN source | Transformer target | 简称 |
+|---|---|---|
+| RadImageNet-ResNet50 | RAD-DINO | MM |
+| RadImageNet-ResNet50 | DINOv2-Base | MG |
+| ImageNet-ResNet50 | RAD-DINO | GM |
+| ImageNet-ResNet50 | DINOv2-Base | GG |
+
+其中：
+
+```text
+manual Google Drive:
+BMAD
+RadImageNet-ResNet50 package
+
+automatic ModelScope:
+timm/resnet50.a1_in1k
+microsoft/rad-dino
+facebook/dinov2-base
+```
+
+---
+
+# 11. 最简版
+
+你只做：
+
+```text
+下载 BMAD Google Drive 原始 zip
+→ 放 data/
+
+下载 RadImageNet PyTorch Google Drive 原始压缩包
+→ 放 model/
+```
+
+然后：
+
+```bash
+GPUS=0,1,2,3 bash run.sh
+```
+
+其余全部由代码完成。
