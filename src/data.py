@@ -32,27 +32,62 @@ def _is_archive(p: Path) -> bool:
     return name.endswith((".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2"))
 
 
-def auto_extract_archives(data_dir: Path) -> None:
+def _archive_stem(p: Path) -> str:
+    name = p.name
+    for suffix in (".tar.bz2", ".tar.gz", ".tbz2", ".tgz", ".zip", ".tar"):
+        if name.lower().endswith(suffix):
+            return name[:-len(suffix)]
+    return p.stem
+
+
+def _extract_one_archive(arc: Path, target: Path) -> None:
+    ensure_dir(target)
+    try:
+        shutil.unpack_archive(str(arc), str(target))
+    except (shutil.ReadError, ValueError):
+        if arc.suffix.lower() == ".zip":
+            with zipfile.ZipFile(arc) as zf:
+                zf.extractall(target)
+        else:
+            with tarfile.open(arc) as tf:
+                tf.extractall(target)
+
+
+def auto_extract_archives(data_dir: Path) -> dict:
+    """Extract raw Google-Drive archives dropped directly in data/.
+
+    Google Drive may produce one large zip or multiple zip files for a folder
+    download. Every top-level supported archive is extracted independently, and
+    dataset discovery later searches recursively across all extracted trees.
+    """
     archives = [p for p in data_dir.iterdir() if p.is_file() and _is_archive(p)]
-    if not archives:
-        return
     out_root = ensure_dir(data_dir / "_extracted")
+    extracted = []
+
     for arc in archives:
-        marker = out_root / (arc.name.replace("/", "_") + ".done")
-        if marker.exists():
-            continue
-        print(f"[data] extracting {arc.name}")
-        target = ensure_dir(out_root / arc.stem.replace(".tar", ""))
-        try:
-            shutil.unpack_archive(str(arc), str(target))
-        except (shutil.ReadError, ValueError):
-            if arc.suffix.lower() == ".zip":
-                with zipfile.ZipFile(arc) as zf:
-                    zf.extractall(target)
-            else:
-                with tarfile.open(arc) as tf:
-                    tf.extractall(target)
-        marker.write_text("ok\n", encoding="utf-8")
+        target = ensure_dir(out_root / _archive_stem(arc))
+        marker = target / ".extract_complete"
+        signature = f"{arc.stat().st_size}:{int(arc.stat().st_mtime)}"
+        current = marker.read_text(encoding="utf-8").strip() if marker.exists() else None
+
+        if current != signature:
+            print(f"[data] extracting raw archive {arc.name} -> {target}")
+            for child in list(target.iterdir()):
+                if child.name == ".extract_complete":
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            _extract_one_archive(arc, target)
+            marker.write_text(signature + "\n", encoding="utf-8")
+
+        extracted.append(str(target))
+
+    return {
+        "archives": [str(p) for p in archives],
+        "extracted": extracted,
+    }
 
 
 def _dataset_roots(data_dir: Path, preferred_subdir: str = "BMAD") -> Dict[str, Path]:
@@ -90,10 +125,13 @@ def _dataset_roots(data_dir: Path, preferred_subdir: str = "BMAD") -> Dict[str, 
 def data_status(cfg: dict) -> dict:
     data_dir = Path(cfg["paths"]["data_dir"]).resolve()
     preferred_subdir = str(cfg["data"].get("preferred_subdir", "BMAD"))
+    archives = [str(p) for p in data_dir.iterdir() if p.is_file() and _is_archive(p)] if data_dir.exists() else []
     roots = _dataset_roots(data_dir, preferred_subdir)
     expected = cfg["data"]["datasets"]
     return {
         "data_dir": str(data_dir),
+        "raw_archives": archives,
+        "automatic_extract_root": str(data_dir / "_extracted"),
         "recommended_root": str(data_dir / preferred_subdir),
         "datasets": {
             d: {
@@ -151,19 +189,22 @@ def _label_from_path(p: Path) -> Optional[int]:
 def prepare_manifest(cfg: dict) -> dict:
     data_dir = Path(cfg["paths"]["data_dir"]).resolve()
     ensure_dir(data_dir)
+    extraction = {}
     if cfg["data"].get("auto_extract_archives", True):
-        auto_extract_archives(data_dir)
+        extraction = auto_extract_archives(data_dir)
 
     status = data_status(cfg)
+    status["extraction"] = extraction
     preferred_subdir = str(cfg["data"].get("preferred_subdir", "BMAD"))
     roots = _dataset_roots(data_dir, preferred_subdir)
     expected = cfg["data"]["datasets"]
     missing = status["missing"]
     if missing:
         raise FileNotFoundError(
-            "BMAD folders not found under data/: " + ", ".join(missing) +
-            f". Recommended layout: {data_dir / preferred_subdir}/"
-            "{Brain,liver,RESC,OCT2017,RSNA,camelyon16}."
+            "BMAD datasets not found after automatic archive extraction: "
+            + ", ".join(missing)
+            + ". Put the original Google-Drive BMAD .zip/.tar.* file(s) directly "
+              "under data/; do not rename or manually extract them."
         )
 
     extensions = {x.lower() for x in cfg["data"]["extensions"]}
