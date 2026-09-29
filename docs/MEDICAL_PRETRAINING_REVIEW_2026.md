@@ -2,183 +2,110 @@
 
 更新日期：2026-09-29
 
-## 最终结论
+## 最终选择
 
-为了避免“模型架构变化”和“预训练域变化”同时发生，当前项目采用一个更严格的 2×2 对照设计。
+为了同时满足：
+
+1. 医学预训练研究价值；
+2. 尽量匹配架构；
+3. Google Drive 内容由用户手工准备；
+4. 其余模型尽可能由 ModelScope 自动下载；
+5. 1–4 × RTX 3090 可快速完成；
+
+当前采用：
 
 ### CNN source
 
-- **medical**：RadImageNet-ResNet50
-- **general**：ImageNet-ResNet50
-
-二者都是 ResNet50。
+- medical：RadImageNet-ResNet50
+  - 官方 PyTorch 权重来自 Google Drive，用户手工下载。
+- general：ImageNet ResNet50 A1
+  - ModelScope：`timm/resnet50.a1_in1k`
+  - 代码自动下载。
 
 ### Transformer target
 
-- **medical**：RadioDINO-S/16
-- **general**：DINO ViT-S/16
+- medical：RAD-DINO
+  - ModelScope：`microsoft/rad-dino`
+  - DINOv2-Base / ViT-B14
+  - 代码自动下载。
+- general：DINOv2-Base
+  - ModelScope：`facebook/dinov2-base`
+  - 与 RAD-DINO 保持 DINOv2-Base 架构。
+  - 代码自动下载。
 
-二者都是 ViT-Small/16，224 输入、384 维 token。
+四组：
 
-因此四组实验是：
-
-1. medical CNN → medical ViT（MM，主模型）
-2. medical CNN → general ViT（MG）
-3. general CNN → medical ViT（GM）
-4. general CNN → general ViT（GG）
-
-这样可以把 source-side medical pretraining 与 target-side medical pretraining 的影响拆开分析。
+```text
+MM = RadImageNet ResNet50 -> RAD-DINO
+MG = RadImageNet ResNet50 -> DINOv2-Base
+GM = ImageNet ResNet50    -> RAD-DINO
+GG = ImageNet ResNet50    -> DINOv2-Base
+```
 
 ---
 
-## RadImageNet-ResNet50
+## 为什么不再使用 RadioDINO-S/16 作为默认 target
 
-官方仓库：
+RadioDINO 在科学上很合适，但当前主要公开分发在 Hugging Face。
+
+用户希望：
+
+> Google Drive 必须手动下载的内容手动准备，其他模型尽量由 ModelScope 自动下载。
+
+RAD-DINO 与 DINOv2-Base 在 ModelScope 上都有可用模型页，因此更适合当前实际实验环境。
+
+同时 RAD-DINO 与通用 DINOv2-Base 使用相同的大体架构族，可以构成更明确的 medical/general target comparison。
+
+---
+
+## 为什么 RadImageNet 仍然保留手工下载
+
+RadImageNet 官方仓库明确将 PyTorch pretrained models 发布在 Google Drive：
 
 https://github.com/BMEII-AI/RadImageNet
 
-RadImageNet 包含约 135 万 CT、MRI 和超声医学图像，覆盖多种解剖部位和病理标签。
+因此该模型遵循用户要求，由用户手工下载官方 PyTorch 包。
 
-官方提供 PyTorch ResNet50 权重，并在官方 notebook 中以 ResNet50 backbone 方式严格加载。
-
-当前代码使用：
+项目只需要：
 
 ```text
 model/radimagenet_resnet50/resnet50_torch.pt
 ```
 
-作为医学 CNN source。
+---
+
+## 为什么 BMAD 也手工下载
+
+BMAD 官方仓库直接提供整理后的六个 anomaly-detection 数据集 Google Drive：
+
+https://github.com/DorisBao/BMAD
+
+因此 BMAD 由用户手工下载并放到：
+
+```text
+data/BMAD/
+```
 
 ---
 
-## RadioDINO-S/16
+## 当前论文问题
 
-官方模型：
+当前设计可用于研究：
 
-https://huggingface.co/Snarcy/RadioDino-s16
+> How do source-side and target-side medical pretraining alter cross-architecture stitchability and zero-shot anomaly sensitivity?
 
-官方代码/项目：
+主要分析：
 
-https://github.com/Snarci/Radio-DINO
+1. MM / MG / GM / GG 的总体性能；
+2. source medical-pretraining 主效应；
+3. target medical-pretraining 主效应；
+4. medical-medical interaction；
+5. radiology vs non-radiology；
+6. AOSS 与真实 AUROC 的相关性；
+7. 参数、FLOPs、显存和延迟。
 
-RadioDINO-S/16：
-
-- ViT-Small
-- patch size 16
-- hidden size 384
-- 约 21.7M 参数
-- DINO 自监督训练
-- 预训练数据为 RadImageNet（CT/MRI/US）
-
-当前代码使用：
-
-```text
-model/radiodino_s16/config.json
-model/radiodino_s16/model.safetensors
-```
-
-作为主医学 Transformer target。
-
----
-
-## 为什么不再把 RAD-DINO 设为默认主模型
-
-RAD-DINO 是质量很高的医学视觉模型，但其主要预训练域是胸片，并且架构是 DINOv2 ViT-B/14。
-
-如果拿它直接与 DINOv3 ViT-S/16 比较，会同时改变：
-
-- 预训练域；
-- 模型规模；
-- patch size；
-- hidden dimension；
-- Transformer 实现。
-
-这会削弱“医学预训练本身是否改善 stitching”的因果解释。
-
-RAD-DINO 更适合作为后续额外 external medical backbone，而不是当前最核心的 controlled comparison。
-
----
-
-## 为什么 RadioDINO 更适合本项目
-
-RadioDINO-S/16 与标准 DINO ViT-S/16 在主要结构上可以对齐：
-
-```text
-ViT-S/16
-224×224
-14×14 patch grid
-384 hidden dimension
-```
-
-因此可以保持：
-
-```text
-same architecture
-different pretraining domain
-```
-
-这比比较不同大小、不同 patch size 的 foundation model 更适合 model stitching 研究。
-
----
-
-## 为什么 CNN 也改成配对 ResNet50
-
-之前使用 DINOv3 ConvNeXt-Tiny 作为 general CNN source，而医学 CNN 候选是 RadImageNet-ResNet50。
-
-这样会把：
-
-```text
-ConvNeXt vs ResNet
-```
-
-和：
-
-```text
-general vs medical pretraining
-```
-
-混在一起。
-
-当前改成：
-
-```text
-ImageNet ResNet50
-vs
-RadImageNet ResNet50
-```
-
-二者架构一致。
-
-因此整个论文可以真正组织为一个 2×2 pretraining-domain study，而不是多个不完全匹配 backbone 的经验比较。
-
----
-
-## 当前主科学问题
-
-最终建议论文围绕：
-
-> Does domain-specific medical pretraining alter cross-architecture stitchability, and can this change be exploited as a zero-shot medical anomaly signal?
-
-展开。
-
-重点结果：
-
-1. MM / MG / GM / GG 四组 zero-shot AUROC；
-2. radiology 与 non-radiology 分组；
-3. AOSS 对真实 anomaly performance 的预测能力；
-4. source medical pretraining 的主效应；
-5. target medical pretraining 的主效应；
-6. medical-medical pairing 是否出现 interaction / synergy；
-7. 参数量、FLOPs、显存与延迟。
-
----
-
-## 详细模型下载与目录
-
-请以仓库根目录：
+详细准备方式请看：
 
 ```text
 PREPARE_EXPERIMENT_CN.md
 ```
-
-为唯一执行说明。
