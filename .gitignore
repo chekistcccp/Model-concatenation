@@ -1,0 +1,23 @@
+# Data / weights / generated artifacts
+data/
+model/
+cache/
+results/
+logs/
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
