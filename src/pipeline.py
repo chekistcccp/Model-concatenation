@@ -288,14 +288,16 @@ def main():
     gpus = gpu_ids(int(cfg["project"].get("max_gpus", 4)))
     print(f"[runtime] GPUs: {gpus}")
 
-    if args.stage != "report":
-        ensure_models(cfg)
+    # Validate/discover data before downloading model weights so a bad data layout fails fast.
     if args.stage in ("all", "prepare"):
         prepare_manifest(cfg)
         if args.stage == "prepare":
             return
-    elif not (Path(cfg["paths"]["cache_dir"]) / "manifest.jsonl").exists():
+    elif args.stage != "report" and not (Path(cfg["paths"]["cache_dir"]) / "manifest.jsonl").exists():
         prepare_manifest(cfg)
+
+    if args.stage != "report":
+        ensure_models(cfg)
 
     if args.stage in ("all", "cache"):
         run_cache(cfg, args.config, gpus)
