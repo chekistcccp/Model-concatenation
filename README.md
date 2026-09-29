@@ -10,13 +10,56 @@
 
 项目按 1–4 × RTX 3090 (24 GB) 优化。最多 4 卡采用 experiment-level parallelism，不做 DDP。
 
+## 开始实验前先看这里
+
+**完整的数据与模型准备说明： [PREPARE_EXPERIMENT_CN.md](PREPARE_EXPERIMENT_CN.md)**
+
+推荐准备目录：
+
+    data/BMAD/
+      Brain/
+      liver/
+      RESC/
+      OCT2017/
+      RSNA/
+      camelyon16/
+
+模型固定目录：
+
+    model/
+      dinov3_convnext_tiny/
+      rad_dino/
+      dinov3_vits16/
+
+模型可以手工提前准备，也可以让程序通过 ModelScope 自动下载。
+
+准备检查（不下载模型）：
+
+    bash run.sh prepare
+
+自动下载缺失模型：
+
+    bash run.sh models
+
+单卡先建立缓存：
+
+    GPUS=0 bash run.sh cache
+
+四卡执行全部实验：
+
+    GPUS=0,1,2,3 bash run.sh
+
+准备检查会生成：
+
+    cache/preflight_report.json
+
 详细的 2026 医学预训练模型调研见：docs/MEDICAL_PRETRAINING_REVIEW_2026.md
 
 ## 1. 数据
 
-数据由用户手工下载，本项目不会自动下载数据集。推荐使用 BMAD 官方整理后的六个数据集，放在项目根目录 data/：
+数据由用户手工下载，本项目不会自动下载数据集。推荐使用 BMAD 官方整理后的六个数据集，统一放在：
 
-    data/
+    data/BMAD/
     ├── Brain/
     ├── liver/
     ├── RESC/
@@ -24,7 +67,7 @@
     ├── RSNA/              # 也接受 Chest-RSNA / Chest
     └── camelyon16/        # 也接受 camelyon16_256
 
-代码会递归识别，外层再套一层 BMAD/ 也可以。顶层 zip/tar/tgz 可以自动解压到 data/_extracted/。
+代码会优先使用 data/BMAD/，同时兼容旧版直接放在 data/ 下的目录。顶层 zip/tar/tgz 仍可自动解压。
 
 ## 2. 环境
 
@@ -44,7 +87,8 @@
 
 也支持分阶段断点运行：
 
-    bash run.sh prepare
+    bash run.sh prepare     # 检查数据/模型，不下载模型
+    bash run.sh models      # 仅准备/下载模型
     bash run.sh cache
     bash run.sh screen
     bash run.sh final
