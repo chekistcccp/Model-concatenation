@@ -13,14 +13,34 @@ paths:
   results_dir: results
 
 models:
-  convnext_id: facebook/dinov3-convnext-tiny-pretrain-lvd1689m
-  vit_id: facebook/dinov3-vits16-pretrain-lvd1689m
-  convnext_local: model/dinov3_convnext_tiny
-  vit_local: model/dinov3_vits16
-  hidden_dim: 384
-  num_prefix_tokens: 5
+  # CNN source remains DINOv3 ConvNeXt-Tiny because a comparable multi-domain
+  # medical CNN with stable ModelScope distribution is not currently used here.
+  source:
+    id: facebook/dinov3-convnext-tiny-pretrain-lvd1689m
+    local: model/dinov3_convnext_tiny
 
-# BMAD reorganized dataset names. Folder matching is case-insensitive.
+  # Medical target is the primary experiment. General target is a controlled
+  # ablation to quantify the effect of medical pretraining.
+  primary_target: medical
+  targets:
+    medical:
+      id: microsoft/rad-dino
+      local: model/rad_dino
+      family: dinov2
+      input_size: 224
+      native_training_size: 518
+      normalization_mean: [0.5307, 0.5307, 0.5307]
+      normalization_std: [0.2583, 0.2583, 0.2583]
+      note: "RAD-DINO: chest-X-ray self-supervised medical ViT-B/14"
+    general:
+      id: facebook/dinov3-vits16-pretrain-lvd1689m
+      local: model/dinov3_vits16
+      family: dinov3
+      input_size: 224
+      normalization_mean: [0.485, 0.456, 0.406]
+      normalization_std: [0.229, 0.224, 0.225]
+      note: "DINOv3 ViT-S/16 general-vision control"
+
 data:
   datasets: [Brain, liver, RESC, OCT2017, RSNA, camelyon16]
   modality_map:
@@ -30,35 +50,35 @@ data:
     OCT2017: oct
     RSNA: chest_xray
     camelyon16: pathology
-  # Cache all test images, but only a deterministic normal subset of each train split.
   cache_train_limit_per_dataset: 2500
   perturb_samples_per_dataset: 256
   auto_extract_archives: true
   extensions: [.png, .jpg, .jpeg, .bmp, .tif, .tiff]
 
 cache:
-  batch_size: 64
+  batch_size: 48
   num_workers: 4
   prefetch_factor: 3
 
 screen:
   source_stages: [1, 2, 3]
   target_blocks: [3, 6, 9]
+  target_names: [medical, general]
   seed: 11
   n_per_source_modality: 500
   epochs: 4
-  batch_size: 128
+  batch_size: 96
   lr: 0.002
   weight_decay: 0.0001
   adapter: mlp
   topk_fraction: 0.05
 
 final:
-  top_configs: 2
+  top_configs_per_target: 2
   seeds: [11, 22, 33]
   n_per_source_modality: 1000
   epochs: 8
-  batch_size: 128
+  batch_size: 96
   lr: 0.001
   weight_decay: 0.0001
   adapter: mlp
@@ -66,12 +86,13 @@ final:
 
 ablation:
   enabled: true
+  target_name: medical
   seed: 11
   calibration_sizes: [250, 500, 1000, 2000]
   adapter_types: [linear, mlp]
   score_modes: [raw_topk, contrast_topk, robust_topk]
   epochs: 6
-  batch_size: 128
+  batch_size: 96
   lr: 0.001
   weight_decay: 0.0001
 
