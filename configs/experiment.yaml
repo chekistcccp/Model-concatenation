@@ -13,6 +13,10 @@ paths:
   results_dir: results
 
 models:
+  # If the exact snapshots are already placed under model/, they are reused.
+  # If missing, run.sh downloads them from ModelScope by default.
+  auto_download_missing: true
+
   # CNN source remains DINOv3 ConvNeXt-Tiny because a comparable multi-domain
   # medical CNN with stable ModelScope distribution is not currently used here.
   source:
@@ -42,6 +46,8 @@ models:
       note: "DINOv3 ViT-S/16 general-vision control"
 
 data:
+  # Recommended canonical layout: data/BMAD/<dataset>/
+  preferred_subdir: BMAD
   datasets: [Brain, liver, RESC, OCT2017, RSNA, camelyon16]
   modality_map:
     Brain: brain_mri
