@@ -53,6 +53,11 @@ def run_preflight(cfg: dict) -> dict:
             else:
                 state = "MISSING (will auto-download from ModelScope)"
             print(f"  {group[:-1]} {name}: {state}")
+    manual_archives = mstatus.get("manual_archives", {})
+    if manual_archives.get("archives"):
+        print("  model raw archive(s):")
+        for x in manual_archives["archives"]:
+            print(f"    - {x}")
     print(f"  report: {out}")
     print("  guide:  PREPARE_EXPERIMENT_CN.md")
     return report
