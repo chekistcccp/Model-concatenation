@@ -67,7 +67,7 @@ screen:
   seed: 11
   n_per_source_modality: 500
   epochs: 4
-  batch_size: 96
+  batch_size: 64
   lr: 0.002
   weight_decay: 0.0001
   adapter: mlp
@@ -78,7 +78,7 @@ final:
   seeds: [11, 22, 33]
   n_per_source_modality: 1000
   epochs: 8
-  batch_size: 96
+  batch_size: 64
   lr: 0.001
   weight_decay: 0.0001
   adapter: mlp
@@ -92,7 +92,7 @@ ablation:
   adapter_types: [linear, mlp]
   score_modes: [raw_topk, contrast_topk, robust_topk]
   epochs: 6
-  batch_size: 96
+  batch_size: 64
   lr: 0.001
   weight_decay: 0.0001
 
