@@ -11,57 +11,55 @@ from typing import List, Sequence
 import numpy as np
 from scipy.stats import spearmanr
 
-from .common import config_name, ensure_dir, gpu_ids, load_yaml, read_json, write_json
+from .common import config_name, ensure_dir, gpu_ids, load_yaml, pair_name, read_json, write_json
 from .data import data_status, prepare_manifest
 from .models import ensure_models, model_status
 
 
-
-
 def run_preflight(cfg: dict) -> dict:
-    """Inspect required datasets/models without downloading model weights."""
     data_error = None
     try:
-        # Also performs optional top-level archive extraction before inspection.
         prepare_manifest(cfg)
     except Exception as exc:
         data_error = str(exc)
 
+    mstatus = model_status(cfg)
+    models_ready = all(
+        item["ready"]
+        for group in ("sources", "targets")
+        for item in mstatus[group].values()
+    )
     report = {
         "data": data_status(cfg),
-        "models": model_status(cfg),
+        "models": mstatus,
+        "models_ready": models_ready,
     }
     report["data"]["error"] = data_error
-    report["models_ready"] = all(
-        item["ready"] for item in report["models"].values()
-    )
-    report["ready_for_full_run"] = bool(
-        report["data"]["ready"] and report["models_ready"]
-    )
+    report["ready_for_full_run"] = bool(report["data"]["ready"] and models_ready)
     out = Path(cfg["paths"]["cache_dir"]) / "preflight_report.json"
     write_json(out, report)
 
-    print("\n[prepare] experiment preparation report")
+    print("\n[prepare] 实验准备检查")
     print(f"  data ready:   {report['data']['ready']}")
-    print(f"  models ready: {report['models_ready']}")
+    print(f"  models ready: {models_ready}")
     if report["data"]["missing"]:
         print("  missing datasets: " + ", ".join(report["data"]["missing"]))
-    for key, item in report["models"].items():
-        state = "READY" if item["ready"] else "MISSING"
-        print(f"  model {key}: {state} -> {item['local_dir']}")
-    print(f"  full report: {out}")
+    for group in ("sources", "targets"):
+        for name, item in mstatus[group].items():
+            print(f"  {group[:-1]} {name}: {'READY' if item['ready'] else 'MISSING'}")
+    print(f"  report: {out}")
+    print("  guide:  PREPARE_EXPERIMENT_CN.md")
     return report
 
 
-def _run_parallel(base_cmds: List[List[str]], gpus: Sequence[int], tag: str) -> None:
-    if not base_cmds:
+def _run_parallel(cmds: List[List[str]], gpus: Sequence[int], tag: str) -> None:
+    if not cmds:
         print(f"[{tag}] nothing to run")
         return
     if not gpus:
-        raise RuntimeError("No CUDA GPU detected. This experiment is designed for NVIDIA GPUs.")
-    pending = list(base_cmds)
-    active: list[tuple[subprocess.Popen, int, list[str]]] = []
-    failures = []
+        raise RuntimeError("No CUDA GPU detected. Set GPUS=... on an NVIDIA machine.")
+    pending = list(cmds)
+    active = []
     while pending or active:
         busy = {gpu for _, gpu, _ in active}
         free = [g for g in gpus if g not in busy]
@@ -69,8 +67,7 @@ def _run_parallel(base_cmds: List[List[str]], gpus: Sequence[int], tag: str) -> 
             gpu = free.pop(0)
             cmd = pending.pop(0) + ["--gpu", str(gpu)]
             print(f"[{tag}] GPU{gpu}: {' '.join(cmd)}")
-            p = subprocess.Popen(cmd)
-            active.append((p, gpu, cmd))
+            active.append((subprocess.Popen(cmd), gpu, cmd))
         time.sleep(0.5)
         still = []
         for p, gpu, cmd in active:
@@ -78,432 +75,316 @@ def _run_parallel(base_cmds: List[List[str]], gpus: Sequence[int], tag: str) -> 
             if rc is None:
                 still.append((p, gpu, cmd))
             elif rc != 0:
-                failures.append((rc, cmd))
+                for q, _, _ in still:
+                    q.terminate()
+                raise RuntimeError(f"{tag} worker failed ({rc}): {' '.join(cmd)}")
         active = still
-        if failures:
-            for p, _, _ in active:
-                p.terminate()
-            raise RuntimeError(f"{tag} worker failed: {failures[0]}")
 
 
-def _python_module(module: str) -> List[str]:
+def _py(module: str) -> List[str]:
     return [sys.executable, "-m", module]
 
 
 def _cache_complete(cfg: dict, ds: str) -> bool:
     root = Path(cfg["paths"]["cache_dir"])
-    target_names = list(cfg["models"]["targets"])
     for split in ("train", "test"):
         d = root / "features" / ds / split
         if not (d / ".done").exists():
             return False
-        if not all((d / f"target_{name}.npy").exists() for name in target_names):
-            return False
+        for source_name in cfg["models"]["sources"]:
+            for stage in (1, 2, 3):
+                if not (d / f"source_{source_name}_s{stage}.npy").exists():
+                    return False
+        for target_name in cfg["models"]["targets"]:
+            if not (d / f"target_{target_name}.npy").exists():
+                return False
     p = root / "perturb" / ds
     if not (p / ".done").exists():
         return False
-    for name in target_names:
-        if not (p / f"normal_target_{name}.npy").exists():
-            return False
-        if not (p / f"pert_target_{name}.npy").exists():
-            return False
-        if not (p / f"mask_{name}.npy").exists():
-            return False
+    for source_name in cfg["models"]["sources"]:
+        for stage in (1, 2, 3):
+            if not (p / f"normal_source_{source_name}_s{stage}.npy").exists():
+                return False
+            if not (p / f"pert_source_{source_name}_s{stage}.npy").exists():
+                return False
+    for target_name in cfg["models"]["targets"]:
+        for name in (
+            f"normal_target_{target_name}.npy",
+            f"pert_target_{target_name}.npy",
+            f"mask_{target_name}.npy",
+        ):
+            if not (p / name).exists():
+                return False
     return True
 
 
-def run_cache(cfg: dict, config_path: str, gpus: Sequence[int]) -> None:
+def run_cache(cfg, config_path, gpus):
     cmds = []
     for ds in cfg["data"]["datasets"]:
-        if _cache_complete(cfg, ds):
-            continue
-        cmds.append(_python_module("src.cache_features") + [
-            "--config", config_path, "--dataset", ds
-        ])
+        if not _cache_complete(cfg, ds):
+            cmds.append(_py("src.cache_features") + ["--config", config_path, "--dataset", ds])
     _run_parallel(cmds, gpus, "cache")
 
 
-def run_screen(cfg: dict, config_path: str, gpus: Sequence[int]) -> None:
+def run_screen(cfg, config_path, gpus):
     out_dir = ensure_dir(Path(cfg["paths"]["results_dir"]) / "screen")
     sc = cfg["screen"]
     cmds = []
-    for target_name in sc["target_names"]:
+    for source_name, target_name in cfg["models"]["pairs"]:
         for stage in sc["source_stages"]:
             for block in sc["target_blocks"]:
-                name = config_name(stage, block, target_name)
+                name = config_name(source_name, target_name, stage, block)
                 out = out_dir / f"{name}.json"
                 if out.exists():
                     continue
-                cmds.append(_python_module("src.worker") + [
-                    "--config", config_path,
-                    "--mode", "stitch",
-                    "--output", str(out),
-                    "--target-name", target_name,
-                    "--source-stage", str(stage),
-                    "--target-block", str(block),
-                    "--adapter", str(sc["adapter"]),
-                    "--seed", str(sc["seed"]),
+                cmds.append(_py("src.worker") + [
+                    "--config", config_path, "--mode", "stitch", "--output", str(out),
+                    "--source-name", source_name, "--target-name", target_name,
+                    "--source-stage", str(stage), "--target-block", str(block),
+                    "--adapter", str(sc["adapter"]), "--seed", str(sc["seed"]),
                     "--n-per-modality", str(sc["n_per_source_modality"]),
-                    "--epochs", str(sc["epochs"]),
-                    "--batch-size", str(sc["batch_size"]),
-                    "--lr", str(sc["lr"]),
-                    "--weight-decay", str(sc["weight_decay"]),
+                    "--epochs", str(sc["epochs"]), "--batch-size", str(sc["batch_size"]),
+                    "--lr", str(sc["lr"]), "--weight-decay", str(sc["weight_decay"]),
                     "--topk-fraction", str(sc["topk_fraction"]),
-                    "--score-modes", "contrast_topk",
-                    "--save-checkpoints",
-                    "--skip-target-eval",
+                    "--score-modes", "contrast_topk", "--save-checkpoints", "--skip-target-eval",
                 ])
     _run_parallel(cmds, gpus, "screen")
 
 
-def run_baselines(cfg: dict, config_path: str) -> None:
-    baseline = Path(cfg["paths"]["results_dir"]) / "baselines.json"
-    if baseline.exists():
-        try:
-            old = read_json(baseline)
-            expected = set(cfg["models"]["targets"])
-            found = {r.get("target_backbone") for r in old.get("rows", [])}
-            if expected.issubset(found):
-                return
-            print("[baseline] stale pre-medical baseline cache detected; rebuilding")
-            baseline.unlink()
-        except Exception:
-            baseline.unlink(missing_ok=True)
-    cmd = _python_module("src.worker") + [
-        "--config", config_path,
-        "--mode", "baseline",
-        "--output", str(baseline),
-        "--topk-fraction", str(cfg["screen"]["topk_fraction"]),
-    ]
-    print("[baseline]", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-
-
-def summarize_screen(cfg: dict) -> List[dict]:
+def summarize_screen(cfg):
     screen_dir = Path(cfg["paths"]["results_dir"]) / "screen"
-    stitchmap_dir = Path(cfg["paths"]["results_dir"]) / "stitchmap"
+    stitch_dir = Path(cfg["paths"]["results_dir"]) / "stitchmap"
     rows = []
     for p in sorted(screen_dir.glob("*.json")):
         obj = read_json(p)
-        # Ignore pre-medical-version screening artifacts such as s2_b6.json.
-        if "target_backbone" not in obj:
+        if "source_backbone" not in obj:
             continue
-        target_name = obj["target_backbone"]
-        if target_name not in cfg["models"]["targets"]:
-            continue
-        aoss = [x["aoss"] for x in obj.get("aoss_rows", []) if np.isfinite(x.get("aoss", np.nan))]
-        nd = [x["normal_discrepancy"] for x in obj.get("aoss_rows", []) if np.isfinite(x.get("normal_discrepancy", np.nan))]
-        radiology_aoss = [x["aoss"] for x in obj.get("aoss_rows", []) if x.get("domain_group") == "radiology" and np.isfinite(x.get("aoss", np.nan))]
-        nonrad_aoss = [x["aoss"] for x in obj.get("aoss_rows", []) if x.get("domain_group") == "non_radiology" and np.isfinite(x.get("aoss", np.nan))]
-        stitchmap_path = stitchmap_dir / p.name
-        auroc = float("nan")
-        if stitchmap_path.exists():
-            auroc = read_json(stitchmap_path).get("mean_image_auroc", float("nan"))
+        vals = [x["aoss"] for x in obj.get("aoss_rows", []) if np.isfinite(x.get("aoss", np.nan))]
+        post = stitch_dir / p.name
         rows.append({
             "config": obj["config"],
-            "target_backbone": target_name,
+            "source_backbone": obj["source_backbone"],
+            "target_backbone": obj["target_backbone"],
+            "pair": pair_name(obj["source_backbone"], obj["target_backbone"]),
             "source_stage": obj["source_stage"],
             "target_block": obj["target_block"],
-            "mean_aoss": float(np.mean(aoss)) if aoss else float("nan"),
-            "radiology_aoss": float(np.mean(radiology_aoss)) if radiology_aoss else float("nan"),
-            "non_radiology_aoss": float(np.mean(nonrad_aoss)) if nonrad_aoss else float("nan"),
-            "mean_normal_discrepancy": float(np.mean(nd)) if nd else float("nan"),
-            "posthoc_mean_image_auroc": auroc,
+            "mean_aoss": float(np.mean(vals)) if vals else float("nan"),
+            "posthoc_mean_image_auroc": read_json(post).get("mean_image_auroc", float("nan")) if post.exists() else float("nan"),
         })
 
-    for target_name in cfg["screen"]["target_names"]:
-        subset = [r for r in rows if r["target_backbone"] == target_name]
+    for source_name, target_name in cfg["models"]["pairs"]:
+        pn = pair_name(source_name, target_name)
+        subset = [r for r in rows if r["pair"] == pn]
         subset.sort(key=lambda r: np.nan_to_num(r["mean_aoss"], nan=-1e9), reverse=True)
         for rank, row in enumerate(subset, 1):
-            row["aoss_rank_within_target"] = rank
+            row["aoss_rank_within_pair"] = rank
 
-    rows.sort(key=lambda r: (r["target_backbone"], r.get("aoss_rank_within_target", 999)))
-    out_csv = Path(cfg["paths"]["results_dir"]) / "screen_summary.csv"
+    rows.sort(key=lambda r: (r["pair"], r.get("aoss_rank_within_pair", 999)))
     if rows:
-        with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        with open(Path(cfg["paths"]["results_dir"]) / "screen_summary.csv", "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            w.writeheader()
-            w.writerows(rows)
+            w.writeheader(); w.writerows(rows)
     return rows
 
 
-def select_configs(cfg: dict) -> dict:
+def select_configs(cfg):
     rows = summarize_screen(cfg)
-    topn = int(cfg["final"]["top_configs_per_target"])
+    topn = int(cfg["final"]["top_configs_per_pair"])
     selected = []
-    for target_name in cfg["screen"]["target_names"]:
-        subset = [r for r in rows if r["target_backbone"] == target_name]
+    for source_name, target_name in cfg["models"]["pairs"]:
+        pn = pair_name(source_name, target_name)
+        subset = [r for r in rows if r["pair"] == pn]
         subset.sort(key=lambda r: np.nan_to_num(r["mean_aoss"], nan=-1e9), reverse=True)
         selected.extend(subset[:topn])
     payload = {
-        "primary_target": cfg["models"]["primary_target"],
         "selection_metric": "source_only_AOSS",
+        "primary_pair": pair_name(cfg["models"]["primary_source"], cfg["models"]["primary_target"]),
         "selected": selected,
     }
     write_json(Path(cfg["paths"]["results_dir"]) / "selected_configs.json", payload)
     return payload
 
 
-def run_final(cfg: dict, config_path: str, gpus: Sequence[int]) -> None:
-    payload = select_configs(cfg)
-    out_dir = ensure_dir(Path(cfg["paths"]["results_dir"]) / "final")
+def run_final(cfg, config_path, gpus):
+    selected = select_configs(cfg)["selected"]
     fc = cfg["final"]
+    out_dir = ensure_dir(Path(cfg["paths"]["results_dir"]) / "final")
     cmds = []
-    for item in payload["selected"]:
+    for item in selected:
         for seed in fc["seeds"]:
             out = out_dir / f"{item['config']}_seed{seed}.json"
             if out.exists():
                 continue
-            cmds.append(_python_module("src.worker") + [
-                "--config", config_path,
-                "--mode", "stitch",
-                "--output", str(out),
-                "--target-name", str(item["target_backbone"]),
-                "--source-stage", str(item["source_stage"]),
-                "--target-block", str(item["target_block"]),
-                "--adapter", str(fc["adapter"]),
-                "--seed", str(seed),
+            cmds.append(_py("src.worker") + [
+                "--config", config_path, "--mode", "stitch", "--output", str(out),
+                "--source-name", item["source_backbone"], "--target-name", item["target_backbone"],
+                "--source-stage", str(item["source_stage"]), "--target-block", str(item["target_block"]),
+                "--adapter", str(fc["adapter"]), "--seed", str(seed),
                 "--n-per-modality", str(fc["n_per_source_modality"]),
-                "--epochs", str(fc["epochs"]),
-                "--batch-size", str(fc["batch_size"]),
-                "--lr", str(fc["lr"]),
-                "--weight-decay", str(fc["weight_decay"]),
-                "--topk-fraction", str(fc["topk_fraction"]),
-                "--score-modes", "contrast_topk",
+                "--epochs", str(fc["epochs"]), "--batch-size", str(fc["batch_size"]),
+                "--lr", str(fc["lr"]), "--weight-decay", str(fc["weight_decay"]),
+                "--topk-fraction", str(fc["topk_fraction"]), "--score-modes", "contrast_topk",
                 "--save-checkpoints",
             ])
     _run_parallel(cmds, gpus, "final")
 
 
-def run_stitchmap(cfg: dict, config_path: str, gpus: Sequence[int]) -> None:
+def run_stitchmap(cfg, config_path, gpus):
+    sc = cfg["screen"]
     screen_dir = Path(cfg["paths"]["results_dir"]) / "screen"
     out_dir = ensure_dir(Path(cfg["paths"]["results_dir"]) / "stitchmap")
-    sc = cfg["screen"]
     cmds = []
-    for target_name in sc["target_names"]:
+    for source_name, target_name in cfg["models"]["pairs"]:
         for stage in sc["source_stages"]:
             for block in sc["target_blocks"]:
-                name = config_name(stage, block, target_name)
+                name = config_name(source_name, target_name, stage, block)
                 out = out_dir / f"{name}.json"
                 if out.exists():
                     continue
-                ckpt_root = screen_dir / "checkpoints" / name
-                cmds.append(_python_module("src.worker") + [
-                    "--config", config_path,
-                    "--mode", "eval_saved",
-                    "--output", str(out),
-                    "--checkpoint-root", str(ckpt_root),
-                    "--target-name", target_name,
-                    "--source-stage", str(stage),
-                    "--target-block", str(block),
-                    "--adapter", str(sc["adapter"]),
-                    "--seed", str(sc["seed"]),
+                cmds.append(_py("src.worker") + [
+                    "--config", config_path, "--mode", "eval_saved", "--output", str(out),
+                    "--checkpoint-root", str(screen_dir / "checkpoints" / name),
+                    "--source-name", source_name, "--target-name", target_name,
+                    "--source-stage", str(stage), "--target-block", str(block),
+                    "--adapter", str(sc["adapter"]), "--seed", str(sc["seed"]),
                     "--batch-size", str(sc["batch_size"]),
-                    "--topk-fraction", str(sc["topk_fraction"]),
-                    "--score-modes", "contrast_topk",
+                    "--topk-fraction", str(sc["topk_fraction"]), "--score-modes", "contrast_topk",
                 ])
     _run_parallel(cmds, gpus, "stitchmap")
     summarize_screen(cfg)
 
 
-def run_ablation(cfg: dict, config_path: str, gpus: Sequence[int]) -> None:
-    ac = cfg["ablation"]
-    if not ac.get("enabled", True):
+def run_baselines(cfg, config_path):
+    out = Path(cfg["paths"]["results_dir"]) / "baselines.json"
+    if out.exists():
         return
+    subprocess.run(_py("src.worker") + [
+        "--config", config_path, "--mode", "baseline", "--output", str(out),
+        "--topk-fraction", str(cfg["screen"]["topk_fraction"]),
+    ], check=True)
+
+
+def run_ablation(cfg, config_path, gpus):
+    if not cfg["ablation"].get("enabled", True):
+        return
+    ac = cfg["ablation"]
     payload = read_json(Path(cfg["paths"]["results_dir"]) / "selected_configs.json")
-    target_name = str(ac.get("target_name", cfg["models"]["primary_target"]))
-    candidates = [x for x in payload["selected"] if x["target_backbone"] == target_name]
-    if not candidates:
-        raise RuntimeError(f"No selected configuration for target={target_name}")
+    candidates = [
+        x for x in payload["selected"]
+        if x["source_backbone"] == ac["source_name"] and x["target_backbone"] == ac["target_name"]
+    ]
     best = candidates[0]
     out_dir = ensure_dir(Path(cfg["paths"]["results_dir"]) / "ablation")
-    jobs = []
-    seen = set()
+    jobs, seen = [], set()
     for n in ac["calibration_sizes"]:
-        key = (int(n), "mlp")
-        seen.add(key)
-        jobs.append(key)
-    main_n = int(cfg["final"]["n_per_source_modality"])
+        jobs.append((int(n), "mlp")); seen.add((int(n), "mlp"))
     for adapter in ac["adapter_types"]:
-        key = (main_n, str(adapter))
+        key = (int(cfg["final"]["n_per_source_modality"]), str(adapter))
         if key not in seen:
-            jobs.append(key)
-            seen.add(key)
+            jobs.append(key); seen.add(key)
 
     cmds = []
     for n, adapter in jobs:
         out = out_dir / f"{best['config']}_n{n}_{adapter}.json"
         if out.exists():
             continue
-        cmds.append(_python_module("src.worker") + [
-            "--config", config_path,
-            "--mode", "stitch",
-            "--output", str(out),
-            "--target-name", target_name,
-            "--source-stage", str(best["source_stage"]),
-            "--target-block", str(best["target_block"]),
-            "--adapter", adapter,
-            "--seed", str(ac["seed"]),
-            "--n-per-modality", str(n),
-            "--epochs", str(ac["epochs"]),
-            "--batch-size", str(ac["batch_size"]),
-            "--lr", str(ac["lr"]),
-            "--weight-decay", str(ac["weight_decay"]),
+        cmds.append(_py("src.worker") + [
+            "--config", config_path, "--mode", "stitch", "--output", str(out),
+            "--source-name", ac["source_name"], "--target-name", ac["target_name"],
+            "--source-stage", str(best["source_stage"]), "--target-block", str(best["target_block"]),
+            "--adapter", adapter, "--seed", str(ac["seed"]), "--n-per-modality", str(n),
+            "--epochs", str(ac["epochs"]), "--batch-size", str(ac["batch_size"]),
+            "--lr", str(ac["lr"]), "--weight-decay", str(ac["weight_decay"]),
             "--topk-fraction", str(cfg["final"]["topk_fraction"]),
             "--score-modes", *[str(x) for x in ac["score_modes"]],
         ])
     _run_parallel(cmds, gpus, "ablation")
 
 
-def _write_rows(path: Path, rows: list[dict]) -> None:
+def _write_rows(path, rows):
     if not rows:
         return
-    fields = sorted({k for r in rows for k in r.keys()})
+    fields = sorted({k for r in rows for k in r})
     with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        w.writerows(rows)
+        w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(rows)
 
 
-def make_report(cfg: dict) -> None:
-    results_root = Path(cfg["paths"]["results_dir"])
+def make_report(cfg):
+    root = Path(cfg["paths"]["results_dir"])
     screen = summarize_screen(cfg)
-    final_objs = [read_json(p) for p in sorted((results_root / "final").glob("*.json"))]
-    final_rows = [r for o in final_objs for r in o.get("rows", [])]
-    _write_rows(results_root / "final_results.csv", final_rows)
-    abl_objs = [read_json(p) for p in sorted((results_root / "ablation").glob("*.json"))]
-    abl_rows = [r for o in abl_objs for r in o.get("rows", [])]
-    _write_rows(results_root / "ablation_results.csv", abl_rows)
-    payload = read_json(results_root / "selected_configs.json") if (results_root / "selected_configs.json").exists() else {"selected": []}
+    final_rows = [r for p in sorted((root / "final").glob("*.json")) for r in read_json(p).get("rows", [])]
+    abl_rows = [r for p in sorted((root / "ablation").glob("*.json")) for r in read_json(p).get("rows", [])]
+    _write_rows(root / "final_results.csv", final_rows)
+    _write_rows(root / "ablation_results.csv", abl_rows)
 
     lines = [
-        "# MedStitch-ZS automated experiment report",
-        "",
-        f"- Primary target backbone: {cfg['models']['primary_target']}",
-        f"- Screened stitch configurations: {len(screen)}",
-        "- Selection metric: source-only AOSS (target test data never used for model selection)",
-        "",
-        "## Medical-vs-general pretraining comparison",
-        "",
-        "| Target | Domain group | Mean image AUROC | N rows |",
-        "|---|---|---:|---:|",
+        "# MedStitch 2×2 自动实验报告", "",
+        "主研究：CNN source 预训练域（medical/general）× Transformer target 预训练域（medical/general）。", "",
+        "| Source | Target | Domain | Mean image AUROC | N |",
+        "|---|---|---|---:|---:|",
     ]
-
-    for target_name in cfg["screen"]["target_names"]:
+    for source_name, target_name in cfg["models"]["pairs"]:
         for group in ("radiology", "non_radiology"):
             vals = [
                 r["image_auroc"] for r in final_rows
-                if r.get("target_backbone") == target_name
+                if r.get("source_backbone") == source_name
+                and r.get("target_backbone") == target_name
                 and r.get("domain_group") == group
                 and r.get("score_mode") == "contrast_topk"
                 and np.isfinite(r.get("image_auroc", np.nan))
             ]
-            lines.append(
-                f"| {target_name} | {group} | "
-                + (f"{np.mean(vals):.4f}" if vals else "N/A")
-                + f" | {len(vals)} |"
-            )
+            lines.append(f"| {source_name} | {target_name} | {group} | "
+                         + (f"{np.mean(vals):.4f}" if vals else "N/A") + f" | {len(vals)} |")
 
-    lines += [
-        "",
-        "## AOSS screening and post-hoc stitchability",
-        "",
-        "| Target | Rank | Config | Mean AOSS | Post-hoc mean image AUROC |",
-        "|---|---:|---|---:|---:|",
-    ]
-
-    for target_name in cfg["screen"]["target_names"]:
-        subset = [r for r in screen if r["target_backbone"] == target_name]
-        for row in subset:
-            auroc = row["posthoc_mean_image_auroc"]
-            auroc_text = f"{auroc:.4f}" if np.isfinite(auroc) else "N/A"
-            lines.append(
-                f"| {target_name} | {row['aoss_rank_within_target']} | "
-                f"{row['config']} | {row['mean_aoss']:.4f} | {auroc_text} |"
-            )
-        valid = [
-            (row["mean_aoss"], row["posthoc_mean_image_auroc"])
-            for row in subset
-            if np.isfinite(row["mean_aoss"]) and np.isfinite(row["posthoc_mean_image_auroc"])
-        ]
+    lines += ["", "## AOSS 与真实 AUROC 的 post-hoc 相关性", ""]
+    for source_name, target_name in cfg["models"]["pairs"]:
+        pn = pair_name(source_name, target_name)
+        subset = [r for r in screen if r["pair"] == pn]
+        valid = [(r["mean_aoss"], r["posthoc_mean_image_auroc"]) for r in subset
+                 if np.isfinite(r["mean_aoss"]) and np.isfinite(r["posthoc_mean_image_auroc"])]
         if len(valid) >= 3:
-            rho, pval = spearmanr([x[0] for x in valid], [x[1] for x in valid])
-            lines.append(
-                f"\n- {target_name}: AOSS vs target-test AUROC "
-                f"Spearman rho={rho:.4f}, p={pval:.4g} (post-hoc only)."
-            )
-
-    selected_text = ", ".join(x["config"] for x in payload.get("selected", [])) or "N/A"
-    lines += [
-        "",
-        "## Selected configurations",
-        "",
-        selected_text,
-        "",
-        "See final_results.csv for per-dataset/per-seed results and "
-        "ablation_results.csv for primary-medical-target ablations.",
-    ]
-    (results_root / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print("\n".join(lines[:18]))
+            rho, p = spearmanr([x[0] for x in valid], [x[1] for x in valid])
+            lines.append(f"- {pn}: Spearman rho={rho:.4f}, p={p:.4g}")
+    (root / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    ap.add_argument(
-        "--stage", default="all",
-        choices=["all", "prepare", "models", "cache", "screen", "final", "stitchmap", "ablation", "report"],
-    )
+    ap.add_argument("--stage", default="all",
+                    choices=["all", "prepare", "models", "cache", "screen", "final", "stitchmap", "ablation", "report"])
     args = ap.parse_args()
     cfg = load_yaml(args.config)
     for key in ("data_dir", "model_dir", "cache_dir", "results_dir"):
         ensure_dir(cfg["paths"][key])
-
     gpus = gpu_ids(int(cfg["project"].get("max_gpus", 4)))
-    print(f"[runtime] GPUs: {gpus}")
 
     if args.stage == "prepare":
-        run_preflight(cfg)
-        return
-
+        run_preflight(cfg); return
     if args.stage == "models":
-        ensure_models(cfg, allow_download=True)
-        run_preflight(cfg)
-        return
-
-    if args.stage == "all":
-        prepare_manifest(cfg)
-    elif args.stage != "report" and not (
-        Path(cfg["paths"]["cache_dir"]) / "manifest.jsonl"
-    ).exists():
-        prepare_manifest(cfg)
+        ensure_models(cfg); run_preflight(cfg); return
 
     if args.stage != "report":
+        prepare_manifest(cfg)
         ensure_models(cfg)
 
     if args.stage in ("all", "cache"):
         run_cache(cfg, args.config, gpus)
-        if args.stage == "cache":
-            return
+        if args.stage == "cache": return
     if args.stage in ("all", "screen"):
-        run_screen(cfg, args.config, gpus)
-        summarize_screen(cfg)
-        if args.stage == "screen":
-            return
+        run_screen(cfg, args.config, gpus); summarize_screen(cfg)
+        if args.stage == "screen": return
     if args.stage in ("all", "final"):
         run_final(cfg, args.config, gpus)
-        if args.stage == "final":
-            return
+        if args.stage == "final": return
     if args.stage == "all":
         run_baselines(cfg, args.config)
     if args.stage in ("all", "stitchmap"):
         run_stitchmap(cfg, args.config, gpus)
-        if args.stage == "stitchmap":
-            return
+        if args.stage == "stitchmap": return
     if args.stage in ("all", "ablation"):
         run_ablation(cfg, args.config, gpus)
-        if args.stage == "ablation":
-            return
+        if args.stage == "ablation": return
     if args.stage in ("all", "report"):
         make_report(cfg)
 
