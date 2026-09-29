@@ -2,6 +2,8 @@
 torch>=2.7.1
 torchvision>=0.22.1
 timm>=1.0.20
+transformers>=4.56.0,<5.0
+modelscope>=1.29.0
 safetensors>=0.5.3
 numpy>=1.26,<3
 scipy>=1.13
