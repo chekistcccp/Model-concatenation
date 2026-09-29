@@ -84,8 +84,7 @@ def gpu_ids(max_gpus: int = 4) -> List[int]:
     if env:
         ids = [int(x) for x in env.split(",") if x.strip()]
         return ids[:max_gpus]
-    n = torch.cuda.device_count()
-    return list(range(min(n, max_gpus)))
+    return list(range(min(torch.cuda.device_count(), max_gpus)))
 
 
 def stage_key(stage: int) -> str:
@@ -94,17 +93,15 @@ def stage_key(stage: int) -> str:
     return f"s{stage}"
 
 
-def config_name(stage: int, block: int, target_name: str | None = None) -> str:
-    core = f"s{stage}_b{block}"
-    return f"{target_name}_{core}" if target_name else core
+def config_name(source_name: str, target_name: str, stage: int, block: int) -> str:
+    return f"{source_name}_to_{target_name}_s{stage}_b{block}"
 
 
-def parse_config_name(name: str) -> tuple[str | None, int, int]:
-    parts = name.split("_")
-    if len(parts) == 2:
-        target = None
-        left, right = parts
-    else:
-        target = "_".join(parts[:-2])
-        left, right = parts[-2:]
-    return target, int(left[1:]), int(right[1:])
+def pair_name(source_name: str, target_name: str) -> str:
+    return f"{source_name}_to_{target_name}"
+
+
+def parse_config_name(name: str) -> tuple[str, str, int, int]:
+    left, stage_part, block_part = name.rsplit("_", 2)
+    source_name, target_name = left.split("_to_", 1)
+    return source_name, target_name, int(stage_part[1:]), int(block_part[1:])
