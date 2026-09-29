@@ -94,10 +94,17 @@ def stage_key(stage: int) -> str:
     return f"s{stage}"
 
 
-def config_name(stage: int, block: int) -> str:
-    return f"s{stage}_b{block}"
+def config_name(stage: int, block: int, target_name: str | None = None) -> str:
+    core = f"s{stage}_b{block}"
+    return f"{target_name}_{core}" if target_name else core
 
 
-def parse_config_name(name: str) -> tuple[int, int]:
-    left, right = name.split("_")
-    return int(left[1:]), int(right[1:])
+def parse_config_name(name: str) -> tuple[str | None, int, int]:
+    parts = name.split("_")
+    if len(parts) == 2:
+        target = None
+        left, right = parts
+    else:
+        target = "_".join(parts[:-2])
+        left, right = parts[-2:]
+    return target, int(left[1:]), int(right[1:])
