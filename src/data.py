@@ -55,20 +55,56 @@ def auto_extract_archives(data_dir: Path) -> None:
         marker.write_text("ok\n", encoding="utf-8")
 
 
-def _dataset_roots(data_dir: Path) -> Dict[str, Path]:
+def _dataset_roots(data_dir: Path, preferred_subdir: str = "BMAD") -> Dict[str, Path]:
+    # Prefer the documented canonical layout data/BMAD/<dataset>/.
+    preferred = data_dir / preferred_subdir
+    search_roots = [preferred, data_dir] if preferred.exists() else [data_dir]
     candidates: Dict[str, List[Path]] = {v: [] for v in DATASET_CANON.values()}
-    for p in data_dir.rglob("*"):
-        if not p.is_dir():
-            continue
-        low = p.name.lower()
-        if low in DATASET_CANON:
-            candidates[DATASET_CANON[low]].append(p)
+    seen = set()
+    for base in search_roots:
+        for p in base.rglob("*"):
+            if not p.is_dir():
+                continue
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            low = p.name.lower()
+            if low in DATASET_CANON:
+                candidates[DATASET_CANON[low]].append(p)
     roots: Dict[str, Path] = {}
     for canon, items in candidates.items():
         if not items:
             continue
-        roots[canon] = sorted(items, key=lambda x: (len(x.parts), str(x)))[0]
+        roots[canon] = sorted(
+            items,
+            key=lambda x: (
+                0 if preferred in x.parents else 1,
+                len(x.parts),
+                str(x),
+            ),
+        )[0]
     return roots
+
+
+def data_status(cfg: dict) -> dict:
+    data_dir = Path(cfg["paths"]["data_dir"]).resolve()
+    preferred_subdir = str(cfg["data"].get("preferred_subdir", "BMAD"))
+    roots = _dataset_roots(data_dir, preferred_subdir)
+    expected = cfg["data"]["datasets"]
+    return {
+        "data_dir": str(data_dir),
+        "recommended_root": str(data_dir / preferred_subdir),
+        "datasets": {
+            d: {
+                "found": d in roots,
+                "path": str(roots[d]) if d in roots else None,
+            }
+            for d in expected
+        },
+        "missing": [d for d in expected if d not in roots],
+        "ready": all(d in roots for d in expected),
+    }
 
 
 def _find_split_dir(root: Path, split: str) -> Optional[Path]:
@@ -118,13 +154,16 @@ def prepare_manifest(cfg: dict) -> dict:
     if cfg["data"].get("auto_extract_archives", True):
         auto_extract_archives(data_dir)
 
-    roots = _dataset_roots(data_dir)
+    status = data_status(cfg)
+    preferred_subdir = str(cfg["data"].get("preferred_subdir", "BMAD"))
+    roots = _dataset_roots(data_dir, preferred_subdir)
     expected = cfg["data"]["datasets"]
-    missing = [d for d in expected if d not in roots]
+    missing = status["missing"]
     if missing:
         raise FileNotFoundError(
             "BMAD folders not found under data/: " + ", ".join(missing) +
-            ". Expected reorganized BMAD folders (Brain, liver, RESC, OCT2017, RSNA, camelyon16)."
+            f". Recommended layout: {data_dir / preferred_subdir}/"
+            "{Brain,liver,RESC,OCT2017,RSNA,camelyon16}."
         )
 
     extensions = {x.lower() for x in cfg["data"]["extensions"]}
