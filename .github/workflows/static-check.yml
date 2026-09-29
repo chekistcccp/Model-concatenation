@@ -1,4 +1,4 @@
-name: static-check
+name: static-check\n# validates the full current main-branch Python tree
 
 on:
   push:
