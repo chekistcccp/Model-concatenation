@@ -1,226 +1,272 @@
 from __future__ import annotations
 
-import os
+import json
 from pathlib import Path
 from typing import Dict, Tuple
 
+import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from modelscope import snapshot_download
-from transformers import AutoModel
+from safetensors.torch import load_file as load_safetensors
+from torchvision.models import resnet50
 
-from .common import ensure_dir, write_json
-
-
-def _model_specs(cfg: dict):
-    items = {
-        "source": {
-            "id": cfg["models"]["source"]["id"],
-            "local": Path(cfg["models"]["source"]["local"]),
-            "role": "general CNN source",
-        }
-    }
-    for name, spec in cfg["models"]["targets"].items():
-        items[f"target:{name}"] = {
-            "id": spec["id"],
-            "local": Path(spec["local"]),
-            "role": f"{name} transformer target",
-        }
-    return items
+from .common import write_json
 
 
-def _weight_files(path: Path):
-    files = []
-    if not path.exists():
-        return files
-    for pattern in ("*.safetensors", "*.bin"):
-        files.extend(p for p in path.rglob(pattern) if p.is_file())
-    return sorted(set(files))
+_MIN_WEIGHT_BYTES = 1 * 1024 * 1024
+
+
+def _is_real_weight_file(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size >= _MIN_WEIGHT_BYTES
 
 
 def model_status(cfg: dict) -> dict:
-    result = {}
-    for key, spec in _model_specs(cfg).items():
-        dst = spec["local"]
-        config_ok = (dst / "config.json").is_file()
-        weights = _weight_files(dst)
-        ready = bool(config_ok and weights)
-        result[key] = {
-            "repo_id": spec["id"],
-            "role": spec["role"],
-            "local_dir": str(dst),
-            "config_json": config_ok,
-            "weight_files": [str(p) for p in weights],
-            "ready": ready,
+    out: dict = {"sources": {}, "targets": {}}
+
+    for name, spec in cfg["models"]["sources"].items():
+        ckpt = Path(spec["checkpoint"])
+        out["sources"][name] = {
+            "kind": spec["kind"],
+            "checkpoint": str(ckpt),
+            "exists": ckpt.is_file(),
+            "size_bytes": ckpt.stat().st_size if ckpt.is_file() else 0,
+            "ready": _is_real_weight_file(ckpt),
+            "note": spec.get("note", ""),
         }
-    return result
 
-
-def _auto_download_enabled(cfg: dict) -> bool:
-    env = os.environ.get("AUTO_DOWNLOAD_MODELS")
-    if env is not None:
-        return env.strip().lower() not in {"0", "false", "no", "off"}
-    return bool(cfg["models"].get("auto_download_missing", True))
-
-
-def ensure_models(cfg: dict, allow_download: bool | None = None) -> Dict[str, Path]:
-    if allow_download is None:
-        allow_download = _auto_download_enabled(cfg)
-
-    specs = _model_specs(cfg)
-    status = model_status(cfg)
-    out: Dict[str, Path] = {}
-
-    for key, spec in specs.items():
-        dst = spec["local"]
-        if not status[key]["ready"]:
-            if not allow_download:
-                raise FileNotFoundError(
-                    f"Model '{key}' is not ready at {dst}. "
-                    f"Prepare ModelScope snapshot '{spec['id']}' in that directory, "
-                    "or run with AUTO_DOWNLOAD_MODELS=1."
-                )
-            print(f"[model] ModelScope download {spec['id']} -> {dst}")
-            ensure_dir(dst)
-            try:
-                snapshot_download(repo_id=spec["id"], local_dir=str(dst), max_workers=8)
-            except TypeError:
-                snapshot_download(spec["id"], local_dir=str(dst))
-        else:
-            print(f"[model] reuse {dst}")
-        out[key] = dst
-
-    status = model_status(cfg)
-    missing = [k for k, v in status.items() if not v["ready"]]
-    write_json(Path(cfg["paths"]["cache_dir"]) / "model_audit.json", status)
-    if missing:
-        detail = ", ".join(
-            f"{k} -> {status[k]['local_dir']}" for k in missing
+    for name, spec in cfg["models"]["targets"].items():
+        config_path = Path(spec["config"])
+        ckpt = Path(spec["checkpoint"])
+        ready = (
+            config_path.is_file()
+            and _is_real_weight_file(ckpt)
         )
-        raise RuntimeError(
-            "Model preparation is incomplete after download/check: " + detail
-        )
+        out["targets"][name] = {
+            "kind": spec["kind"],
+            "architecture": spec["architecture"],
+            "config": str(config_path),
+            "checkpoint": str(ckpt),
+            "config_exists": config_path.is_file(),
+            "weight_exists": ckpt.is_file(),
+            "weight_size_bytes": ckpt.stat().st_size if ckpt.is_file() else 0,
+            "ready": ready,
+            "note": spec.get("note", ""),
+        }
     return out
 
 
-def _load_local(path: str, device: torch.device, dtype=torch.float16):
-    p = Path(path)
-    if not (p / "config.json").is_file() or not _weight_files(p):
+def ensure_models(cfg: dict) -> dict:
+    status = model_status(cfg)
+    missing = []
+    for group in ("sources", "targets"):
+        for name, item in status[group].items():
+            if not item["ready"]:
+                missing.append(f"{group[:-1]}:{name}")
+
+    report_path = Path(cfg["paths"]["cache_dir"]) / "model_audit.json"
+    write_json(report_path, status)
+    if missing:
         raise FileNotFoundError(
-            f"Incomplete local model at {p}. Run 'bash run.sh models' "
-            "or prepare the model files according to PREPARE_EXPERIMENT_CN.md."
+            "Manual model preparation is incomplete: "
+            + ", ".join(missing)
+            + ". Read PREPARE_EXPERIMENT_CN.md and place the exact checkpoints "
+              "under model/ before running experiments."
         )
-    model = AutoModel.from_pretrained(
-        str(p), local_files_only=True, torch_dtype=dtype
-    ).to(device).eval()
-    for param in model.parameters():
-        param.requires_grad_(False)
+    return status
+
+
+def _unwrap_state_dict(obj):
+    if isinstance(obj, dict):
+        for key in ("state_dict", "model"):
+            if key in obj and isinstance(obj[key], dict):
+                return obj[key]
+    return obj
+
+
+def _strip_module_prefix(state: dict) -> dict:
+    if state and all(k.startswith("module.") for k in state):
+        return {k[len("module."):]: v for k, v in state.items()}
+    return state
+
+
+class ResNet50Source(nn.Module):
+    """ResNet50 feature source with three cached stitch stages.
+
+    s1 = layer2 output: 28x28x512
+    s2 = layer3 output: 14x14x1024
+    s3 = layer4 output: 7x7x2048
+    """
+
+    def __init__(self, checkpoint: str, kind: str):
+        super().__init__()
+        base = resnet50(weights=None)
+        self.backbone = nn.Sequential(*list(base.children())[:9])
+        ckpt = Path(checkpoint)
+
+        state = _unwrap_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False))
+        if not isinstance(state, dict):
+            raise TypeError(f"Unsupported ResNet checkpoint object in {ckpt}")
+        state = _strip_module_prefix(state)
+
+        if kind == "radimagenet_resnet50":
+            # Official RadImageNet PyTorch notebook loads the checkpoint into a
+            # wrapper whose state-dict keys begin with 'backbone.'.
+            if any(k.startswith("backbone.") for k in state):
+                self.load_state_dict(state, strict=True)
+            elif any(k.startswith("0.") for k in state):
+                self.backbone.load_state_dict(state, strict=True)
+            else:
+                raise RuntimeError(
+                    "RadImageNet checkpoint does not match the official PyTorch "
+                    "Backbone format. Expected keys beginning with 'backbone.' "
+                    "or Sequential indices such as '0.'."
+                )
+        elif kind == "imagenet_resnet50":
+            # TorchVision ImageNet state dict uses named ResNet keys.
+            named_base = resnet50(weights=None)
+            named_base.load_state_dict(state, strict=True)
+            self.backbone = nn.Sequential(*list(named_base.children())[:9])
+        else:
+            raise ValueError(f"Unknown source kind: {kind}")
+
+    def forward_stages(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        # conv1/bn/relu/maxpool/layer1
+        for idx in range(5):
+            x = self.backbone[idx](x)
+        x = self.backbone[5](x)
+        s1 = x
+        x = self.backbone[6](x)
+        s2 = x
+        x = self.backbone[7](x)
+        s3 = x
+        return {"s1": s1, "s2": s2, "s3": s3}
+
+
+def load_source(cfg: dict, source_name: str, device: torch.device, dtype=torch.float16):
+    spec = cfg["models"]["sources"][source_name]
+    model = ResNet50Source(spec["checkpoint"], spec["kind"]).to(device).eval()
+    model = model.to(dtype=dtype)
+    for p in model.parameters():
+        p.requires_grad_(False)
     return model
 
 
-def load_source(cfg: dict, device: torch.device, dtype=torch.float16):
-    return _load_local(cfg["models"]["source"]["local"], device, dtype)
+def _load_timm_config(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_target(cfg: dict, target_name: str, device: torch.device, dtype=torch.float16):
-    return _load_local(cfg["models"]["targets"][target_name]["local"], device, dtype)
+    spec = cfg["models"]["targets"][target_name]
+    config_path = Path(spec["config"])
+    ckpt_path = Path(spec["checkpoint"])
+    model_cfg = _load_timm_config(config_path)
 
+    arch = str(spec["architecture"])
+    file_arch = str(model_cfg.get("architecture", arch))
+    if file_arch != arch:
+        raise RuntimeError(
+            f"Target {target_name} architecture mismatch: config.json says "
+            f"{file_arch}, experiment expects {arch}"
+        )
 
-def _conv_stages(conv):
-    for x in (
-        getattr(getattr(conv, "model", None), "stages", None),
-        getattr(getattr(conv, "encoder", None), "stages", None),
-        getattr(conv, "stages", None),
-    ):
-        if x is not None:
-            return x
-    raise AttributeError("Unable to locate DINOv3 ConvNeXt stages")
+    model = timm.create_model(arch, pretrained=False, num_classes=0)
+    state = load_safetensors(str(ckpt_path), device="cpu")
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    # timm snapshots with num_classes=0 should match except for a possible
+    # classifier head omitted by design. Fail on anything structurally important.
+    bad_missing = [k for k in missing if not k.startswith("head.")]
+    bad_unexpected = [k for k in unexpected if not k.startswith("head.")]
+    if bad_missing or bad_unexpected:
+        raise RuntimeError(
+            f"Target {target_name} checkpoint mismatch. "
+            f"missing={bad_missing[:8]}, unexpected={bad_unexpected[:8]}"
+        )
 
-
-def _target_family(target) -> str:
-    mt = str(getattr(target.config, "model_type", "")).lower()
-    if mt == "dinov2":
-        return "dinov2"
-    if mt in {"dinov3_vit", "dinov3"}:
-        return "dinov3"
-    raise ValueError(f"Unsupported target model_type={mt}")
-
-
-def _target_layers(target):
-    return target.encoder.layer if _target_family(target) == "dinov2" else target.model.layer
-
-
-def _target_norm(target):
-    return target.layernorm if _target_family(target) == "dinov2" else target.norm
-
-
-def target_num_prefix(target) -> int:
-    return 1 if _target_family(target) == "dinov2" else 1 + int(getattr(target.config, "num_register_tokens", 0))
-
-
-def target_grid(target, input_size: int) -> int:
-    patch = getattr(target.config, "patch_size", 16)
-    if isinstance(patch, (tuple, list)):
-        patch = patch[0]
-    if input_size % int(patch) != 0:
-        raise ValueError(f"input_size={input_size} must be divisible by patch_size={patch}")
-    return input_size // int(patch)
+    model = model.to(device).eval().to(dtype=dtype)
+    for p in model.parameters():
+        p.requires_grad_(False)
+    return model
 
 
 @torch.inference_mode()
 def extract_source_features(source, pixel_values: torch.Tensor) -> Dict[str, torch.Tensor]:
-    h = pixel_values.to(next(source.parameters()).dtype)
-    feats = {}
-    for idx, stage in enumerate(_conv_stages(source)):
-        h = stage(h)
-        if idx in (1, 2, 3):
-            feats[f"s{idx}"] = h
-    return feats
+    return source.forward_stages(pixel_values.to(next(source.parameters()).dtype))
+
+
+def target_num_prefix(target) -> int:
+    return int(getattr(target, "num_prefix_tokens", 1))
+
+
+def target_grid(target, input_size: int) -> int:
+    patch = getattr(target.patch_embed, "patch_size", (16, 16))
+    patch = int(patch[0] if isinstance(patch, (tuple, list)) else patch)
+    if input_size % patch != 0:
+        raise ValueError(f"input_size={input_size} must be divisible by patch_size={patch}")
+    return input_size // patch
 
 
 @torch.inference_mode()
 def extract_target_features(target, pixel_values: torch.Tensor) -> torch.Tensor:
-    out = target(pixel_values.to(next(target.parameters()).dtype), return_dict=True)
-    return out.last_hidden_state[:, target_num_prefix(target):, :]
+    h = target.forward_features(pixel_values.to(next(target.parameters()).dtype))
+    if isinstance(h, dict):
+        # Defensive support for timm variants returning feature dictionaries.
+        for key in ("x_norm_patchtokens", "x_prenorm", "x"):
+            if key in h:
+                h = h[key]
+                break
+    if h.ndim != 3:
+        raise RuntimeError(f"Expected ViT token tensor [B,N,C], got shape={tuple(h.shape)}")
+    return h[:, target_num_prefix(target):, :]
 
 
-def _prefix_and_patch_position(target, input_size: int) -> Tuple[torch.Tensor, torch.Tensor | None]:
-    if _target_family(target) == "dinov3":
-        prefix = torch.cat(
-            [target.embeddings.cls_token.detach(), target.embeddings.register_tokens.detach()],
-            dim=1,
-        )
-        return prefix.float(), None
-
+def _prefix_and_patch_position(target, input_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    npre = target_num_prefix(target)
+    pos = target.pos_embed.detach().float()
     grid = target_grid(target, input_size)
-    hidden = int(target.config.hidden_size)
-    device = next(target.parameters()).device
-    dtype = next(target.parameters()).dtype
-    dummy = torch.zeros(1, 1 + grid * grid, hidden, device=device, dtype=dtype)
-    pos = target.embeddings.interpolate_pos_encoding(dummy, input_size, input_size)
-    prefix = target.embeddings.cls_token.detach().to(pos.dtype) + pos[:, :1]
-    return prefix.float(), pos[:, 1:].float()
+    expected_patches = grid * grid
+
+    if pos.shape[1] - npre != expected_patches:
+        raise RuntimeError(
+            f"Position embedding has {pos.shape[1] - npre} patch tokens, "
+            f"but input grid requires {expected_patches}."
+        )
+
+    prefix_parts = []
+    if getattr(target, "cls_token", None) is not None:
+        prefix_parts.append(target.cls_token.detach().float())
+    if getattr(target, "reg_token", None) is not None:
+        prefix_parts.append(target.reg_token.detach().float())
+    if not prefix_parts:
+        raise RuntimeError("Target ViT has no prefix token to initialize stitching.")
+
+    prefix = torch.cat(prefix_parts, dim=1)
+    if prefix.shape[1] != npre:
+        raise RuntimeError(
+            f"Prefix-token count mismatch: constructed={prefix.shape[1]}, model={npre}"
+        )
+    prefix = prefix + pos[:, :npre]
+    patch_pos = pos[:, npre:]
+    return prefix, patch_pos
 
 
 class StitchAdapter(nn.Module):
-    CHANNELS = {1: 192, 2: 384, 3: 768}
-
     def __init__(
         self,
-        source_stage: int,
+        in_channels: int,
         hidden_dim: int,
         grid: int,
         prefix_init: torch.Tensor,
-        patch_position: torch.Tensor | None,
+        patch_position: torch.Tensor,
         adapter_type: str = "mlp",
     ):
         super().__init__()
         self.grid = int(grid)
-        in_ch = self.CHANNELS[int(source_stage)]
         self.channel_proj = (
-            nn.Conv2d(in_ch, hidden_dim, 1)
-            if in_ch != hidden_dim else nn.Identity()
+            nn.Conv2d(in_channels, hidden_dim, 1)
+            if in_channels != hidden_dim
+            else nn.Identity()
         )
         self.norm = nn.LayerNorm(hidden_dim)
         if adapter_type == "mlp":
@@ -233,10 +279,11 @@ class StitchAdapter(nn.Module):
             self.mlp = nn.Linear(hidden_dim, hidden_dim)
         else:
             raise ValueError(adapter_type)
+
         self.prefix_tokens = nn.Parameter(prefix_init.detach().clone().float())
         self.register_buffer(
             "patch_position",
-            None if patch_position is None else patch_position.detach().clone().float(),
+            patch_position.detach().clone().float(),
             persistent=False,
         )
 
@@ -244,98 +291,72 @@ class StitchAdapter(nn.Module):
         x = fmap.float()
         h, w = x.shape[-2:]
         if (h, w) != (self.grid, self.grid):
-            x = (
-                F.adaptive_avg_pool2d(x, (self.grid, self.grid))
-                if h > self.grid
-                else F.interpolate(
+            if h > self.grid and w > self.grid:
+                x = F.adaptive_avg_pool2d(x, (self.grid, self.grid))
+            else:
+                x = F.interpolate(
                     x,
                     size=(self.grid, self.grid),
                     mode="bilinear",
                     align_corners=False,
                 )
-            )
-        x = self.channel_proj(x).flatten(2).transpose(1, 2).contiguous()
+        x = self.channel_proj(x)
+        x = x.flatten(2).transpose(1, 2).contiguous()
         patches = x + self.mlp(self.norm(x))
-        if self.patch_position is not None:
-            patches = patches + self.patch_position
-        return self.prefix_tokens.expand(patches.shape[0], -1, -1), patches
+        patches = patches + self.patch_position
+        prefix = self.prefix_tokens.expand(patches.shape[0], -1, -1)
+        return prefix, patches
 
 
 class TargetTail(nn.Module):
-    def __init__(
-        self,
-        target,
-        cut_block: int,
-        input_size: int,
-        compile_tail: bool = False,
-    ):
+    def __init__(self, target, cut_block: int, compile_tail: bool = False):
         super().__init__()
         self.target = target
-        self.family = _target_family(target)
         self.cut_block = int(cut_block)
+        self.blocks = target.blocks
+        self.norm = target.norm
         self.num_prefix = target_num_prefix(target)
-        self.layers = _target_layers(target)
-        self.norm = _target_norm(target)
-        if not 0 <= self.cut_block < len(self.layers):
+        if not 0 <= self.cut_block < len(self.blocks):
             raise ValueError(f"cut_block {cut_block} out of range")
-        if self.family == "dinov3":
-            dummy = torch.zeros(
-                1,
-                3,
-                input_size,
-                input_size,
-                device=next(target.parameters()).device,
-                dtype=next(target.parameters()).dtype,
-            )
-            with torch.inference_mode():
-                cos, sin = target.rope_embeddings(dummy)
-            self.register_buffer("rope_cos", cos, persistent=False)
-            self.register_buffer("rope_sin", sin, persistent=False)
-        else:
-            self.register_buffer("rope_cos", None, persistent=False)
-            self.register_buffer("rope_sin", None, persistent=False)
         if compile_tail and hasattr(torch, "compile"):
             self.forward = torch.compile(self.forward, mode="reduce-overhead")
 
     def forward(self, prefix: torch.Tensor, patches: torch.Tensor):
-        h = torch.cat([prefix, patches], 1).to(next(self.target.parameters()).dtype)
-        if self.family == "dinov3":
-            rope = (self.rope_cos, self.rope_sin)
-            for layer in self.layers[self.cut_block:]:
-                h = layer(h, position_embeddings=rope)
-                if isinstance(h, (tuple, list)):
-                    h = h[0]
-        else:
-            for layer in self.layers[self.cut_block:]:
-                h = layer(h)
-                if isinstance(h, (tuple, list)):
-                    h = h[0]
-        return self.norm(h)[:, self.num_prefix:, :]
+        h = torch.cat([prefix, patches], dim=1)
+        h = h.to(next(self.target.parameters()).dtype)
+        for block in self.blocks[self.cut_block:]:
+            h = block(h)
+        h = self.norm(h)
+        return h[:, self.num_prefix:, :]
 
 
 def build_stitch_modules(
     cfg: dict,
     target,
+    source_name: str,
     target_name: str,
     source_stage: int,
     target_block: int,
     adapter_type: str,
 ):
-    spec = cfg["models"]["targets"][target_name]
-    input_size = int(spec.get("input_size", cfg["project"]["image_size"]))
+    source_spec = cfg["models"]["sources"][source_name]
+    target_spec = cfg["models"]["targets"][target_name]
+    stage_channels = source_spec["stage_channels"]
+    in_channels = int(stage_channels[int(source_stage) - 1])
+    hidden_dim = int(target_spec["hidden_dim"])
+    input_size = int(target_spec["input_size"])
     prefix, patch_pos = _prefix_and_patch_position(target, input_size)
     adapter = StitchAdapter(
-        source_stage,
-        int(target.config.hidden_size),
-        target_grid(target, input_size),
-        prefix,
-        patch_pos,
-        adapter_type,
+        in_channels=in_channels,
+        hidden_dim=hidden_dim,
+        grid=target_grid(target, input_size),
+        prefix_init=prefix,
+        patch_position=patch_pos,
+        adapter_type=adapter_type,
     )
     tail = TargetTail(
         target,
         target_block,
-        input_size,
         bool(cfg["project"].get("compile_tail", False)),
     )
     return adapter, tail
