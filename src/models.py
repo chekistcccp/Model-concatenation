@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -16,6 +20,107 @@ from .common import ensure_dir, write_json
 
 
 _MIN_WEIGHT_BYTES = 1 * 1024 * 1024
+
+
+_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2")
+
+
+def _is_archive(path: Path) -> bool:
+    return path.name.lower().endswith(_ARCHIVE_SUFFIXES)
+
+
+def _archive_stem(path: Path) -> str:
+    name = path.name
+    for suffix in sorted(_ARCHIVE_SUFFIXES, key=len, reverse=True):
+        if name.lower().endswith(suffix):
+            return name[:-len(suffix)]
+    return path.stem
+
+
+def _extract_archive(arc: Path, target: Path) -> None:
+    ensure_dir(target)
+    try:
+        shutil.unpack_archive(str(arc), str(target))
+    except (shutil.ReadError, ValueError):
+        if arc.suffix.lower() == ".zip":
+            with zipfile.ZipFile(arc) as zf:
+                zf.extractall(target)
+        else:
+            with tarfile.open(arc) as tf:
+                tf.extractall(target)
+
+
+def prepare_manual_model_archives(cfg: dict) -> dict:
+    """Extract raw Google-Drive model archives placed directly in model/.
+
+    The user does not need to rename or unpack the RadImageNet bundle. We
+    recursively locate the official ResNet50 PyTorch checkpoint and materialize
+    it at the canonical path expected by the rest of the pipeline.
+    """
+    model_root = ensure_dir(Path(cfg["paths"]["model_dir"]))
+    extract_root = ensure_dir(model_root / "_manual_extracted")
+
+    archives = [
+        p for p in model_root.iterdir()
+        if p.is_file() and _is_archive(p)
+    ]
+    extracted = []
+    for arc in archives:
+        target = ensure_dir(extract_root / _archive_stem(arc))
+        marker = target / ".extract_complete"
+        signature = f"{arc.stat().st_size}:{int(arc.stat().st_mtime)}"
+        if not marker.exists() or marker.read_text(encoding="utf-8").strip() != signature:
+            print(f"[model] extracting manual archive {arc.name} -> {target}")
+            if target.exists():
+                for child in target.iterdir():
+                    if child.name != ".extract_complete":
+                        if child.is_dir():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
+            _extract_archive(arc, target)
+            marker.write_text(signature + "\n", encoding="utf-8")
+        extracted.append(str(target))
+
+    medical = cfg["models"]["sources"]["medical"]
+    canonical = Path(medical["checkpoint"])
+    if not _is_weight_file(canonical):
+        search_roots = [extract_root, model_root]
+        exact = []
+        fuzzy = []
+        for root in search_roots:
+            if not root.exists():
+                continue
+            for p in root.rglob("*"):
+                if not _is_weight_file(p):
+                    continue
+                low = p.name.lower()
+                if low == "resnet50_torch.pt":
+                    exact.append(p)
+                elif "resnet50" in low and p.suffix.lower() in {".pt", ".pth"}:
+                    fuzzy.append(p)
+
+        candidates = exact or fuzzy
+        # Never select the canonical destination itself as a source.
+        candidates = [p for p in candidates if p.resolve() != canonical.resolve()]
+        if candidates:
+            src = sorted(candidates, key=lambda p: (0 if p.name.lower() == "resnet50_torch.pt" else 1, len(p.parts), str(p)))[0]
+            ensure_dir(canonical.parent)
+            print(f"[model] detected RadImageNet ResNet50: {src}")
+            print(f"[model] materializing canonical checkpoint -> {canonical}")
+            canonical.unlink(missing_ok=True)
+            try:
+                os.link(src, canonical)
+            except OSError:
+                shutil.copy2(src, canonical)
+
+    return {
+        "archives": [str(p) for p in archives],
+        "extracted": extracted,
+        "radimagenet_checkpoint": str(canonical),
+        "radimagenet_ready": _is_weight_file(canonical),
+    }
+
 
 
 def _is_weight_file(path: Path) -> bool:
@@ -35,8 +140,9 @@ def _auto_download_enabled(cfg: dict) -> bool:
     return bool(cfg["models"].get("auto_download_missing", True))
 
 
-def model_status(cfg: dict) -> dict:
-    out = {"sources": {}, "targets": {}}
+def model_status(cfg: dict, prepare_manual: bool = True) -> dict:
+    manual_archive_status = prepare_manual_model_archives(cfg) if prepare_manual else {}
+    out = {"manual_archives": manual_archive_status, "sources": {}, "targets": {}}
 
     for name, spec in cfg["models"]["sources"].items():
         if spec.get("manual", False):
@@ -88,7 +194,8 @@ def ensure_models(cfg: dict, allow_download: bool | None = None) -> dict:
     if allow_download is None:
         allow_download = _auto_download_enabled(cfg)
 
-    status = model_status(cfg)
+    prepare_manual_model_archives(cfg)
+    status = model_status(cfg, prepare_manual=False)
 
     # Manual Google Drive item: never auto-download.
     manual_missing = [
@@ -124,7 +231,7 @@ def ensure_models(cfg: dict, allow_download: bool | None = None) -> dict:
                 )
             _download_snapshot(spec["repo_id"], Path(spec["local"]))
 
-    status = model_status(cfg)
+    status = model_status(cfg, prepare_manual=False)
     write_json(Path(cfg["paths"]["cache_dir"]) / "model_audit.json", status)
 
     missing = []
