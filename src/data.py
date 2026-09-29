@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tarfile
 import zipfile
@@ -12,16 +13,40 @@ from .common import ensure_dir, write_json, write_jsonl
 
 
 DATASET_CANON = {
+    # canonical / legacy names
     "brain": "Brain",
     "liver": "liver",
     "resc": "RESC",
     "oct2017": "OCT2017",
     "rsna": "RSNA",
     "chest": "RSNA",
-    "chest-rsna": "RSNA",
+    "chest_rsna": "RSNA",
     "camelyon16": "camelyon16",
     "camelyon16_256": "camelyon16",
+    # BMAD official Google-Drive archive/folder names after removing _AD
+    "retina_resc": "RESC",
+    "retina_oct2017": "OCT2017",
+    "histopathology": "camelyon16",
 }
+
+
+def _normalized_dataset_name(name: str) -> str:
+    """Normalize BMAD raw archive/extraction directory names.
+
+    Examples:
+      3918150265_Brain_AD      -> brain
+      3b257ef473_Liver_AD      -> liver
+      Retina_OCT2017_AD        -> retina_oct2017
+      Retina_RESC_AD           -> retina_resc
+      Chest-AD                 -> chest
+      Histopathology_AD        -> histopathology
+    """
+    low = name.strip().lower().replace("-", "_").replace(" ", "_")
+    low = re.sub(r"^[0-9a-f]{10}_", "", low)
+    low = re.sub(r"_+", "_", low).strip("_")
+    if low.endswith("_ad"):
+        low = low[:-3]
+    return low
 NORMAL_KEYS = {"good", "normal", "healthy"}
 ABNORMAL_KEYS = {"ungood", "bad", "anomaly", "anomalous", "abnormal", "disease", "diseased"}
 MASK_KEYS = {"anomaly_mask", "mask", "masks", "label", "labels", "ground_truth", "gt"}
@@ -122,9 +147,9 @@ def _dataset_roots(data_dir: Path, preferred_subdir: str = "BMAD") -> Dict[str, 
             if key in seen:
                 continue
             seen.add(key)
-            low = p.name.lower()
-            if low in DATASET_CANON:
-                candidates[DATASET_CANON[low]].append(p)
+            normalized = _normalized_dataset_name(p.name)
+            if normalized in DATASET_CANON:
+                candidates[DATASET_CANON[normalized]].append(p)
     roots: Dict[str, Path] = {}
     for canon, items in candidates.items():
         if not items:
