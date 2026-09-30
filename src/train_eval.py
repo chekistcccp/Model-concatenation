@@ -15,6 +15,7 @@ from torchvision.transforms import functional as TF
 
 from .common import read_jsonl, stage_key
 from .models import build_stitch_modules, target_grid
+from .prediction_io import write_predictions
 
 
 def _load_memmap(path: Path):
@@ -152,7 +153,8 @@ def _load_mask(path, grid):
 
 @torch.inference_mode()
 def evaluate_dataset(cfg, target, source_name, target_name, adapter, tail, dataset, source_stage,
-                     device, topk_fraction, score_modes=("contrast_topk",), batch_size=256):
+                     device, topk_fraction, score_modes=("contrast_topk",), batch_size=256,
+                     prediction_path=None, prediction_metadata=None, evaluate_pixels=True):
     root = Path(cfg["paths"]["cache_dir"]) / "features" / dataset / "test"
     records = read_jsonl(root / "records.jsonl")
     fmap = _load_memmap(root / f"source_{source_name}_{stage_key(source_stage)}.npy")
@@ -160,7 +162,10 @@ def evaluate_dataset(cfg, target, source_name, target_name, adapter, tail, datas
     labels = [int(r["label"]) for r in records]
     scores = {m: [] for m in score_modes}
     pixel_scores, pixel_labels = [], []
-    has_masks = any(r.get("mask") for r in records)
+    if len(fmap) != len(records) or len(target_feat) != len(records):
+        raise ValueError(f"Cache arrays/records length mismatch: {dataset}")
+    has_masks = evaluate_pixels and any(r.get("mask") for r in records)
+    map_stats = []
     grid = target_grid(target, int(cfg["models"]["targets"][target_name]["input_size"]))
 
     for start in range(0, len(records), batch_size):
@@ -174,6 +179,11 @@ def evaluate_dataset(cfg, target, source_name, target_name, adapter, tail, datas
         )
         for mode in score_modes:
             scores[mode].extend(_score_from_map(d, topk_fraction, mode).cpu().tolist())
+        if prediction_path is not None:
+            means, medians, maxima = d.mean(1).cpu().tolist(), d.median(1).values.cpu().tolist(), d.max(1).values.cpu().tolist()
+            map_stats.extend(dict(discrepancy_mean=a, discrepancy_median=b, discrepancy_max=c) for a, b, c in zip(means, medians, maxima))
+        if not evaluate_pixels:
+            continue
         loc = (d - d.median(1, keepdim=True).values).clamp_min(0).reshape(-1, grid, grid).cpu().numpy()
         for local_i, rec in enumerate(records[start:stop]):
             mask = _load_mask(rec.get("mask"), grid)
@@ -184,6 +194,10 @@ def evaluate_dataset(cfg, target, source_name, target_name, adapter, tail, datas
                 pixel_labels.append(mask.reshape(-1))
 
     out = []
+    if prediction_path is not None:
+        if list(score_modes) != ["contrast_topk"] or prediction_metadata is None:
+            raise ValueError("Prediction export requires contrast_topk metadata")
+        write_predictions(prediction_path, records, scores["contrast_topk"], prediction_metadata, map_stats)
     for mode in score_modes:
         auroc, aupr = _safe_auc(labels, scores[mode])
         row = {

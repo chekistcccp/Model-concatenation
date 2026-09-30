@@ -1259,3 +1259,13 @@ target.embeddings.interpolate_pos_encoding
 - 分析入口为 `python -m src.analyze_results --root .`；补充 manifest 审计为
   `python -m src.audit_followup --root .`；服务器图片重复核验为
   `python -m src.verify_manifest_duplicates`。这些命令不改变实验选择协议。
+
+# 35. 固定配置的下一步诊断
+
+已增加独立 `predictions` 入口，按原 selected_configs 与 final JSON 重放保存的
+final checkpoints，导出逐图分数，不改变原训练或 source-only AOSS 排序。
+服务器命令、文件要求、指标一致性检查及声明边界见
+[PREDICTION_REPLAY_CN.md](PREDICTION_REPLAY_CN.md)。
+
+仅代码、测试与此类使用说明同步仓库；所有 predictions、报告和实际运行证据
+仍放在被 Git 忽略的 results/ 下，不能提交。

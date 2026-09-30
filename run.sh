@@ -12,6 +12,11 @@ export MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
 CONFIG="${CONFIG:-configs/experiment.yaml}"
 STAGE="${1:-all}"
 
+if [[ "$STAGE" == "predictions" ]]; then
+    python -m src.export_predictions --config "$CONFIG"
+    exit 0
+fi
+
 mkdir -p data model cache results logs
 
 python - <<'PY'

@@ -176,3 +176,14 @@ screening 预算。无病例级 scores 时不生成患者 CI。报告明确披�
 服务器可运行 `python -m src.verify_manifest_duplicates`，仅对 Brain/OCT2017
 跨 split 同名候选计算文件及 RGB 像素哈希，输出
 `results/analysis/server_duplicate_checks.json`；不需要 GPU 或重训。
+
+下一步使用已锁定 final checkpoint 导出逐图分数：
+
+```bash
+python -m src.export_predictions --config configs/experiment.yaml --check-only
+GPUS=0,1,2,3 bash run.sh predictions
+```
+
+详见 [逐图分数导出说明](docs/PREDICTION_REPLAY_CN.md)。仅重放已有 12 个 final jobs，
+输出到 `results/predictions/`；缺失 checkpoint 或重放指标不一致会失败，
+不重训、不重选配置。图像评分保持 contrast_topk / 0.05。

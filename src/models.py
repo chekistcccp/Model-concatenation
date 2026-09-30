@@ -12,7 +12,6 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from modelscope import snapshot_download
 from safetensors.torch import load_file as load_safetensors
 from torchvision.models import resnet50
 from transformers import AutoModel
@@ -199,6 +198,8 @@ def model_status(cfg: dict, prepare_manual: bool = True) -> dict:
 
 
 def _download_snapshot(repo_id: str, dst: Path) -> None:
+    from modelscope import snapshot_download
+
     ensure_dir(dst)
     print(f"[model] ModelScope download {repo_id} -> {dst}")
     try:
