@@ -8,6 +8,10 @@
 
 **[PREPARE_EXPERIMENT_CN.md](PREPARE_EXPERIMENT_CN.md)**
 
+后续使用 Codex 继续处理实验与结果时，请优先阅读：
+
+**[docs/CODEX_HANDOFF_CN.md](docs/CODEX_HANDOFF_CN.md)**
+
 ## 你手工准备什么
 
 ### data/
