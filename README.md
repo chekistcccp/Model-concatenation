@@ -150,3 +150,29 @@ GPUS=0,1,2,3 bash run.sh
 | ImageNet-ResNet50 | DINOv2-Base | GG |
 
 详细下载地址和压缩包处理逻辑请看 **PREPARE_EXPERIMENT_CN.md**。
+
+## 已锁定实验的只读结果分析
+
+在仓库根目录运行（不需要 GPU，不调用 selection 或训练）：
+
+```bash
+pip install -r requirements-analysis.txt
+python -m src.analyze_results --root .
+python -m unittest discover -s tests -p "test_analysis.py"
+```
+
+读取原始 JSON 与配置，先检查完整性，再生成 `results/analysis/analysis_report.md`、
+CSV 和 `results/figures/` PDF/PNG。缺失或无效核心结果会中止统计；原始结果和
+`selected_configs.json` 不改写，SHA256 留档。数据审计缺失时尝试读取 `run.log`
+开头的审计 JSON，并标明来源；模型权重验证不以下载日志替代。
+
+统计使用每 seed 内的 dataset macro 和跨 seed 的 sample SD；regret 仅比较同一
+screening 预算。无病例级 scores 时不生成患者 CI。报告明确披露当前跨 fold
+平均 AOSS 的全局选点边界，保持现有 zero-shot selection 实现不变。
+
+取回服务器 `cache/manifest.jsonl` 与 data/model audit 后，运行
+`python -m src.audit_followup --root .` 生成补充审计报告。它区分文件名重合与
+已确认内容重复，并按现有代码重建采样（不冒充运行时 cache records）。
+服务器可运行 `python -m src.verify_manifest_duplicates`，仅对 Brain/OCT2017
+跨 split 同名候选计算文件及 RGB 像素哈希，输出
+`results/analysis/server_duplicate_checks.json`；不需要 GPU 或重训。

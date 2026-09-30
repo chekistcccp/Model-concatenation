@@ -1249,3 +1249,13 @@ target.embeddings.interpolate_pos_encoding
 # 33. 给 Codex 的一句话任务定义
 
 > 先把当前实验完整跑通并验证结果产物；随后围绕 MM/MG/GM/GG 的 source effect、target effect、interaction、radiology/non-radiology 差异，以及 AOSS→真实 AUROC 的预测能力做严格统计与可视化；在主结果成立前不要改变 zero-shot selection protocol。
+
+# 34. 仓库同步约定（用户要求）
+
+- 后续代码、测试、依赖与使用文档修改完成后，提交并推送到远程仓库。
+- 不同步分析结果：`results/` 下的报告、CSV、图表及哈希记录保留在本地。
+- 原始运行日志、数据、模型、cache 审计及 manifest 不随代码提交。
+- 同步失败须明确报告，不把本地提交当作远程同步成功。
+- 分析入口为 `python -m src.analyze_results --root .`；补充 manifest 审计为
+  `python -m src.audit_followup --root .`；服务器图片重复核验为
+  `python -m src.verify_manifest_duplicates`。这些命令不改变实验选择协议。
