@@ -187,3 +187,8 @@ GPUS=0,1,2,3 bash run.sh predictions
 详见 [逐图分数导出说明](docs/PREDICTION_REPLAY_CN.md)。仅重放已有 12 个 final jobs，
 输出到 `results/predictions/`；缺失 checkpoint 或重放指标不一致会失败，
 不重训、不重选配置。图像评分保持 contrast_topk / 0.05。
+
+取回完整 predictions 后运行 `python -m src.analyze_predictions --root .`，先验证
+导出哈希/标签/指标，再生成配对图像 bootstrap 区间、分数/ROC/PR、跨 seed 秩
+相关和误例候选。区间条件于固定模型，不能当作患者级 CI；所有附加 scoring
+比较仅为 post-hoc 诊断，不能替换主评分。输出仅在 results/ 下，不上传仓库。

@@ -1269,3 +1269,10 @@ final checkpoints，导出逐图分数，不改变原训练或 source-only AOSS 
 
 仅代码、测试与此类使用说明同步仓库；所有 predictions、报告和实际运行证据
 仍放在被 Git 忽略的 results/ 下，不能提交。
+
+取回完整 predictions 后，CPU 分析入口为
+`python -m src.analyze_predictions --root . --bootstrap 1000`，依赖安装见
+`requirements-analysis.txt`。完整性检查通过后生成固定模型下的配对图像区间、
+dataset/domain macro、ROC/PR、分数诊断及误例候选；缺少可靠患者 ID 时不能
+声称患者级 CI。使用说明继续见 `PREDICTION_REPLAY_CN.md`，不得用诊断指标
+重选配置或替换 contrast_topk 主结果。

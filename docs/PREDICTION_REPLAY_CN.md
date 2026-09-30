@@ -71,6 +71,26 @@ export_manifest.status 必须为 complete，且 original_inputs_unchanged=true�
 误例排序和跨 seed 比较。缺少可靠 patient IDs 时，不能把逐图（slice/patch）
 bootstrap 说成患者级置信区间。
 
+CPU 分析命令（无需模型权重或 feature cache）：
+
+```bash
+pip install -r requirements-analysis.txt
+python -m src.analyze_predictions --root . --bootstrap 1000
+```
+
+除 predictions 外还需保留原 `results/final/*.json`、`selected_configs.json` 与
+实验配置；已有 `cache/manifest.jsonl` 时逐图核对标签。入口先检查 receipt、
+哈希和原指标，再输出 `results/analysis/predictions/analysis_report.md` 及
+`results/figures/predictions/` 下的 PDF/PNG。配置跨系统仅有换行差异时，核对
+服务器 Git 版本中的原始字节及解析后的 YAML 内容，不能跳过内容一致性检查。
+
+报告分别列出训练 seed SD、固定模型下配对图像 bootstrap 区间、dataset macro、
+异常比例与 AUPR、score components、OCT 子类、跨 seed 秩相关和误例候选。
+bootstrap 对所有 pair/seed 使用相同图像抽样，不把 seeds 当成新增患者。
+诊断用 raw top-k 可从当前 contrast score 加 patch median 恢复；仅适用于当前
+top-k 不超过一半 patch 数的条件，不能据此改变评分。所有输出保持在被忽略的
+results/ 中，不上传报告、预测或图表。
+
 所有结果均属 post-hoc 诊断，不能用 target test 改选 stitch、调整 top-k、翻转
 score、挑选 seed 或把最好的校准量替换主结果。现有全局跨-fold AOSS 平均的
 声明边界继续如实保留；本次导出不修改 selection protocol。后续若需修订该
