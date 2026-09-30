@@ -192,3 +192,9 @@ GPUS=0,1,2,3 bash run.sh predictions
 导出哈希/标签/指标，再生成配对图像 bootstrap 区间、分数/ROC/PR、跨 seed 秩
 相关和误例候选。区间条件于固定模型，不能当作患者级 CI；所有附加 scoring
 比较仅为 post-hoc 诊断，不能替换主评分。输出仅在 results/ 下，不上传仓库。
+
+下一轮独立入口为 `bash run.sh diagnostics`（固定 checkpoint 的空间/source 诊断）
+和 `bash run.sh common_stitch`（固定 s2b3/s2b9 对照；复用原 12 jobs，补训 12 jobs）。
+执行前使用 `python -m src.run_followup --stage <stage> --check-only`。
+命令、预算与只取回 `results/followup/` 的清单见
+[补充实验运行与取回说明](docs/FOLLOWUP_EXPERIMENTS_CN.md)。原主实验和选点不变。

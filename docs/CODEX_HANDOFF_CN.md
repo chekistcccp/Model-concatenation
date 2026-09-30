@@ -1276,3 +1276,15 @@ final checkpoints，导出逐图分数，不改变原训练或 source-only AOSS 
 dataset/domain macro、ROC/PR、分数诊断及误例候选；缺少可靠患者 ID 时不能
 声称患者级 CI。使用说明继续见 `PREDICTION_REPLAY_CN.md`，不得用诊断指标
 重选配置或替换 contrast_topk 主结果。
+
+# 36. 独立补充实验的运行与取回
+
+新增 `diagnostics` 和 `common_stitch` 入口，均绕过主 pipeline 的 preparation
+和 selection。前者只重放固定 checkpoint；后者固定使用原锁定点并集 s2b3/s2b9，
+复制 12 个原 final JSON，仅补训练缺少的 12 个 job（原 final 预算不变）。
+两个点均报告，不能根据 test 改选最优点或替代原主结果。
+
+命令、检查、产物和取回清单见 [FOLLOWUP_EXPERIMENTS_CN.md](FOLLOWUP_EXPERIMENTS_CN.md)。
+只新增被忽略的 `results/followup/` 产物，不修改原 selected_configs、screen、final，
+不重建 cache 或下载模型。所有代码/文档修改同步仓库；结果、地图、原图、checkpoint、
+日志和取回压缩包不能提交 Git。大型缓存的 stat 检查不等价于完整内容哈希。

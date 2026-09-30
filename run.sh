@@ -17,6 +17,11 @@ if [[ "$STAGE" == "predictions" ]]; then
     exit 0
 fi
 
+if [[ "$STAGE" == "diagnostics" || "$STAGE" == "common_stitch" ]]; then
+    python -m src.run_followup --config "$CONFIG" --stage "$STAGE"
+    exit 0
+fi
+
 mkdir -p data model cache results logs
 
 python - <<'PY'
