@@ -36,6 +36,26 @@ NFFA 和梯度检查严格排除其 held-out modality，OCT 同时排除 RESC �
 
 保留原实验环境，不升级依赖。先更新代码，再运行独立命令：
 
+推荐：用户手动 `git pull --ff-only` 并激活原环境后，只需提交/运行：
+
+```bash
+bash run_mechanism_audit.sh
+```
+
+脚本自动完成预检查、GPU 0 审计、完成状态/输出哈希验证、日志和打包。
+不会 git pull、安装依赖或自动激活/切换环境。指定其他可见 GPU 可用
+`GPU_ID=1 bash run_mechanism_audit.sh`；调度器已限制 CUDA_VISIBLE_DEVICES 时，
+GPU_ID 是进程可见的索引，通常保持 0。可用 PYTHON_BIN 指定原环境 Python 的完整路径。
+
+结束时打印 `[TRANSFER]` 压缩包绝对路径，形如
+`results/transfer/mechanism_run_日期时间_随机后缀.tar.gz`。正常失败/中断也尝试打包
+已有产物并保留非零退出码；机器断电或 SIGKILL 无法保证执行退出打包。
+已有 audit manifest 时拒绝覆盖，打包旧结果和本次日志并明确退出失败。
+包内保留 `mechanism_audit/` 和独立启动日志目录；下载到本地 results/transfer 后
+在该目录解压即可。如果预检查失败尚未生成 audit，包内只有启动日志。
+
+以下是等价的手动分步命令，无需在一键脚本之外重复执行：
+
 ```bash
 git pull --ff-only
 python -m src.mechanism_audit --check-only
