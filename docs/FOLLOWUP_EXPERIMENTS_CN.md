@@ -133,3 +133,21 @@ tar --exclude='*/checkpoints' -czf results/transfer/followup_results.tar.gz resu
 
 不要对结果或压缩包使用 `git add -f`。不要为这两项实验运行 `bash run.sh all`
 或 `final`；已有 final 入口会再次调用选点，不适合补充实验。
+# 取回后的 CPU 分析
+
+保持取回文件原样；若 `diagnostics/` 和 `common_stitch/` 解压在
+`results/transfer/`，运行：
+
+```bash
+python -m src.analyze_followup_results --root . --input results/transfer
+```
+
+若保留服务器目录层次，改为 `--input results/followup`。依赖使用
+`requirements-analysis.txt`。入口核对传输哈希、原始 final、锁定选点、训练预算、
+重放指标、空间分数与 source 模态排除，再报告两个固定点的配对 seed 效应。
+输出仅在 `results/analysis/followup_results/`，不能提交仓库。
+
+原始 prediction 元数据 receipt 若与服务器记录不同，会单独记录为来源限制；
+CSV 分数和 final 的哈希不允许不同。Windows 配置/源码仅 CRLF 差异单列记录。
+病例图是预定 random/hard 子集的事后诊断，不能当作全测试集定位评估；
+不根据这些分析重选 stitch 或替换主分数。
