@@ -1288,3 +1288,12 @@ dataset/domain macro、ROC/PR、分数诊断及误例候选；缺少可靠患者
 只新增被忽略的 `results/followup/` 产物，不修改原 selected_configs、screen、final，
 不重建 cache 或下载模型。所有代码/文档修改同步仓库；结果、地图、原图、checkpoint、
 日志和取回压缩包不能提交 Git。大型缓存的 stat 检查不等价于完整内容哈希。
+
+# 37. 研究复盘与探索性评分标定
+
+新增独立 CPU 入口 `python -m src.source_calibration --stage fit/evaluate`（两步分别运行）。
+详见 [RESEARCH_REVIEW_V1_CN.md](RESEARCH_REVIEW_V1_CN.md)。保持原主结果、AOSS 和选点不变，
+只用非目标 modality 正常 source 分数拟合整体/局部分量的等权经验 CDF 标定。
+所有四种分量/融合对照全部报告，不根据 test 选择权重或方法；因方案受既有 test
+诊断启发，结果必须标记为探索性，不能声称新的未见测试验证。
+输出在忽略目录 results/exploratory/，不得提交。代码/测试/方法说明同步仓库。
