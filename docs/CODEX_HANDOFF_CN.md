@@ -1289,7 +1289,7 @@ dataset/domain macro、ROC/PR、分数诊断及误例候选；缺少可靠患者
 不重建 cache 或下载模型。所有代码/文档修改同步仓库；结果、地图、原图、checkpoint、
 日志和取回压缩包不能提交 Git。大型缓存的 stat 检查不等价于完整内容哈希。
 
-# 37. 研究复盘与探索性评分标定
+# 37. 历史探索：评分标定（已暂停）
 
 新增独立 CPU 入口 `python -m src.source_calibration --stage fit/evaluate`（两步分别运行）。
 详见 [RESEARCH_REVIEW_V1_CN.md](RESEARCH_REVIEW_V1_CN.md)。保持原主结果、AOSS 和选点不变，
@@ -1297,3 +1297,15 @@ dataset/domain macro、ROC/PR、分数诊断及误例候选；缺少可靠患者
 所有四种分量/融合对照全部报告，不根据 test 选择权重或方法；因方案受既有 test
 诊断启发，结果必须标记为探索性，不能声称新的未见测试验证。
 输出在忽略目录 results/exploratory/，不得提交。代码/测试/方法说明同步仓库。
+
+用户纠正研究方向后，此探索不再作为改进主线；本节是后续工作记录，不是原研究目的。
+不得据此将方法研究预先改写为仅分析负面结果，亦不得替换原 contrast_topk 主结果。
+
+# 38. 恢复原研究主线：机制审计
+
+按第 1、5、8、31 节研究 CNN→Transformer 正常对齐、异常敏感 disagreement 和
+source-only AOSS。先验证真实 target 中间层接回 tail 的恒等性、目标缓存一致性、
+原 adapter 的正常图像配对优势和梯度路径，再决定需要修复或补充的环节。
+入口为 `python -m src.mechanism_audit --check-only` / `--gpu 0`。
+见 [MECHANISM_AUDIT_CN.md](MECHANISM_AUDIT_CN.md)。不训练、不更新权重、不重选，
+不读取 test/valid cache，原数据与主结果保持不变。真实 GPU 验证必须以取回产物为准。

@@ -1,5 +1,10 @@
 # 研究复盘与独立改进方案 v1
 
+> 状态：已暂停的历史探索。用户纠正研究方向后，此文不再代表后续实验优先级。
+> 原研究目标以 CODEX_HANDOFF_CN.md 第 1、5、8、31 节为准；下一步执行
+> [MECHANISM_AUDIT_CN.md](MECHANISM_AUDIT_CN.md) 的原方法机制审计。
+> 保留此文和独立代码仅为追溯已做过的探索，不将其结果替换原主实验。
+
 ## 研究问题与现有证据
 
 研究问题仍是医学预训练如何改变 CNN→Transformer stitchability，以及这种差异
@@ -69,5 +74,5 @@ source/target 条件效应与 interaction、radiology/non-radiology 分层、饱
 - 本轮不改 AOSS：下一步若确有必要，应独立设计 source-only 内层验证，区分
   local sensitivity、normal discrepancy 和比值的作用，并在新测试数据上确认。
   这属于后续新协议，不能回写当前选点结果。
-- 在新增独立确认数据之前，当前最稳健的论文定位是医学预训练的模态/层位置依赖，
-  以及 stitchability 到真实 anomaly detection 的迁移边界，而非预设 MM 必须优于 GG。
+- 不预先改变论文研究定位。应先检查 NFFA、TargetTail 接口和 AOSS 的原技术链条，
+  再依据证据决定方法修复及受控实验；不得预设 MM 必须优于 GG。
