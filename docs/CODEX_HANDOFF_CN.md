@@ -1309,3 +1309,13 @@ source-only AOSS。先验证真实 target 中间层接回 tail 的恒等性、�
 入口为 `python -m src.mechanism_audit --check-only` / `--gpu 0`。
 见 [MECHANISM_AUDIT_CN.md](MECHANISM_AUDIT_CN.md)。不训练、不更新权重、不重选，
 不读取 test/valid cache，原数据与主结果保持不变。真实 GPU 验证必须以取回产物为准。
+
+# 39. 原方法第二环：配对扰动响应
+
+机制审计取回后，下一项为固定 final checkpoint 的 source 配对扰动分解。
+用 normal_in/out 分离原有空间差异和扰动净响应，并以原 compute_aoss 独立重放
+300 个分量检查。净响应只作机制诊断，不能替代 AOSS 或改变选点。
+一键入口为 `bash run_paired_response_audit.sh`；取回 CPU 分析为
+`python -m src.analyze_paired_response --input results/transfer/paired_response_audit`。
+见 [PAIRED_RESPONSE_AUDIT_CN.md](PAIRED_RESPONSE_AUDIT_CN.md)。
+原 zero-shot selection、主评分和结果保留；训练样本成员与扰动类型推断须披露限制。
