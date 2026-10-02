@@ -3,7 +3,7 @@
 
 > 面向后续 Codex 继续处理实验运行、结果汇总、统计分析与论文图表。
 >
-> 更新时间：2026-09-30
+> 主线澄清：2026-10-03（按用户最新明确要求）；历史运行记录保留
 > 仓库：chekistcccp/Model-concatenation
 > 本交接文件创建前代码 HEAD：05b7756ae812098b131b175421addf855bd2231e
 
@@ -17,10 +17,11 @@
 
 1. 保持当前 strict zero-shot protocol 不变。
 2. 先验证实验产物完整性，再做统计。
-3. 优先分析 medical/general pretraining 的 source effect、target effect 和 interaction。
-4. 区分 radiology 与 non-radiology。
-5. 验证 AOSS 是否能在不访问 target test 的情况下预测较好的 stitch。
-6. 在真实结果成立后，再决定是否扩展分辨率、baseline 或模型矩阵。
+3. 优先设计和验证由预训练参数模块拼接形成的新零样本异常检测模型。
+4. 以同预算组件对照检验拼接、正常对齐和继承后段是否带来真实异常检测收益。
+5. medical/general source、target effect、interaction 和 radiology 分层属于方法解释与泛化验证。
+6. AOSS 属于方法的 source-only 选择环节；相关性和 regret 是选择有效性的证据。
+7. 新方法变体独立记录，原选点、预算、评分、主结果不覆盖；不根据已看 target test 调方法。
 
 不要在没有记录的情况下改变数据划分、target selection protocol、候选 stitch grid 或主评分方式。
 
@@ -30,7 +31,21 @@
 
 核心问题：
 
-> 医学域预训练是否会改变 CNN→Transformer 的跨架构 stitchability，并且这种变化能否被利用为 zero-shot medical anomaly signal？
+> 设计一种参数模块拼接方法，将已有预训练模型的部分参数与小型可训练接口组成新模型，在不使用目标模态训练/验证数据的情况下实现零样本异常检测。
+
+此定位依据用户 2026-10-03 的明确澄清，优先于历史章节中将医学预训练效应
+列为核心目标的表述。医学/通用参数矩阵用于检验和解释所提出的方法，不能替代
+方法贡献。现有 NFFA + CNN-prefix→adapter→Transformer-suffix + reference discrepancy
+是方法 v1；还需要直接证明真实检测价值及组件必要性。
+
+“参数拼接”的具体实现是继承并连接可执行网络模块：新路径参数由 CNN prefix 参数、
+adapter 参数和 Transformer suffix 参数构成。训练仅更新 adapter。完整异常检测器
+仍包含 frozen reference Transformer，用于原差异评分；新 stitched backbone 与完整
+detector 的依赖、参数量和推理成本必须分别描述。
+
+zero-shot 仍指当前 leave-one-modality-out 的 adapter 训练边界。历史 global 五折
+平均 AOSS 的跨 fold 信息边界见第 38–40 节；不能因主线纠正便宣称全局选择严格
+fold-exclusive，也不改变历史选择文件。
 
 当前不是训练传统监督分类器或分割器。
 
@@ -120,7 +135,7 @@ general target：
 
 | Source | Target | Pair | 作用 |
 |---|---|---|---|
-| RadImageNet ResNet50 | RAD-DINO | MM | 主模型 |
+| RadImageNet ResNet50 | RAD-DINO | MM | 历史主模型；所提方法的医学参数条件 |
 | RadImageNet ResNet50 | DINOv2-Base | MG | 医学 source 对照 |
 | ImageNet ResNet50 | RAD-DINO | GM | 医学 target 对照 |
 | ImageNet ResNet50 | DINOv2-Base | GG | 通用对照 |
@@ -1333,3 +1348,32 @@ checkpoint：原 seed=11、4 epochs/500 normal per source modality，不补训�
 净响应只作诊断；原 score、grid、预算、selected_configs 和 final 保留。
 原 global 五折选点的跨 fold 信息边界继续披露，不能声称本补充实验已修复该问题。
 公平基线、组件对照、定位/外部验证仍是后续研究内容，不能称此入口已完成全部。
+
+# 41. 用户澄清后的当前方法主线与下一轮（2026-10-03）
+
+第 1 节已按用户明确研究目的改写：设计参数模块拼接的方法，组成新模型并实现
+零样本异常检测。医学 source/target effect、interaction、radiology 分层与 AOSS
+诊断用于验证和解释方法，不替代方法增量。第 38–40 节为历史补充记录；第 40 节
+的全网格审计保留为可选附属实验，下一轮先运行 `bash run_method_controls.sh`。
+
+固定方案见 [METHOD_PLAN_CN.md](METHOD_PLAN_CN.md)。新增实际注册 CNN prefix、
+adapter 和共享 Transformer suffix/reference 的 ComposedAnomalyDetector；完整
+bundle 不依赖原权重路径/下载，保留原 RGB 预处理、reference 和 contrast_topk。
+新 stitched backbone 与完整双分支 detector 分别报告参数与运行依赖。
+
+四 arm：原 60 checkpoint 重放、matched_tail 60 同预算训练、no_tail 60 同初始
+正常 source 训练、untrained_adapter 60 无优化控制。仅 normal source，全部新
+控制训练固定后再统一 target 评价；新 AOSS 只报告，不重选。原 final/selected、
+原预算与主结果不覆盖。逐 fold 重置 RNG 与历史原 worker 连续 RNG 的差异明确披露。
+
+服务器保留成功 mechanism/paired 产物、原 cache、模型权重、正常 source 原图和
+已有目标 masks。原 AOSS global 五折的信息边界保留，不声称已修复为 fold-exclusive。
+手动 git pull 后在成功 paired 环境运行；退出打印的 transfer 包放本地
+results/transfer/ 并解压。新 checkpoint/bundle .pt 留在服务器，不进返回包/Git。
+CPU 接收分析入口 `python -m src.analyze_method_controls --input results/transfer/method_controls`。
+
+已有结果按方法主线重整的 CPU 入口为 `python -m src.analyze_method_evidence`，
+输出 results/analysis/method_review_20261003/；仅核验/汇总，不选择或训练。
+本轮九篇正式 2026 文献见 PUBLICATION_GAP_PLAN_2026_CN.md。强公平基线、
+AUPRO/外部验证、新训练目标与全目标端到端效率尚未完成，不得将单元测试当 GPU 结果。
+代码/测试/方法文档同步仓库；数字、报告、图、日志、权重及运行包保持忽略。
