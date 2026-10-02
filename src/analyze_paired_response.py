@@ -53,6 +53,52 @@ def pretraining_effects(seed):
     return pd.DataFrame(rows)
 
 
+def response_details(frame, out):
+    """Additional descriptive evidence; no new score, selector or patient inference."""
+    f = frame[frame.valid_regions].copy()
+    radio = ["brain_mri", "liver_ct", "chest_xray"]
+    f["source_domain_group"] = np.where(f.source_modality.isin(radio), "radiology", "non_radiology")
+    for label, extra in [("by_source_group", ("source_domain_group",))]:
+        for name, table in zip(["modality", "fold", "seed", "summary"], summarize(f, extra)):
+            table.to_csv(out / f"{label}_{name}.csv", index=False)
+    f["negative_net"] = f.net_local_response < 0
+    f["negative_contrast_delta"] = f.contrast_delta < 0
+    counts = f.groupby(["pair", "seed", "held_out_modality", "dataset"], as_index=False).agg(
+        n=("record_index", "size"), negative_net=("negative_net", "sum"),
+        negative_contrast_delta=("negative_contrast_delta", "sum"),
+        inferred_training_members=("training_membership_inferred", "sum"))
+    counts.to_csv(out / "response_sign_counts.csv", index=False)
+    coverage = f.groupby(["pair", "seed", "held_out_modality", "source_modality", "dataset",
+                          "training_membership_inferred"], as_index=False).size()
+    coverage.to_csv(out / "inferred_membership_coverage.csv", index=False)
+    from matplotlib import pyplot as plt
+    _, _, _, summary = summarize(f)
+    summary = summary.set_index("pair").reindex(["MM", "MG", "GM", "GG"])
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.8))
+    x = np.arange(4)
+    axes[0].bar(x, summary.normal_spatial_contrast_mean, label="Normal spatial contrast")
+    axes[0].bar(x, summary.net_local_response_mean, bottom=summary.normal_spatial_contrast_mean,
+                label="Perturbation net response")
+    axes[0].set_xticks(x, summary.index)
+    axes[0].set_ylabel("Source discrepancy contrast")
+    axes[0].set_title("Raw response = normal contrast + net response", fontsize=9)
+    axes[0].legend(fontsize=7, loc="upper center", bbox_to_anchor=(.5, -.14), ncol=2, frameon=False)
+    _, _, _, kinds = summarize(f, ("perturbation_kind_inferred",))
+    for i, kind in enumerate(["intensity", "blur", "patch_copy"]):
+        g = kinds[kinds.perturbation_kind_inferred == kind].set_index("pair").reindex(summary.index)
+        axes[1].bar(x + (i - 1) * .24, g.net_local_response_mean, width=.24,
+                    yerr=g.net_local_response_std, capsize=2, label=kind)
+    axes[1].set_xticks(x, summary.index)
+    axes[1].set_ylabel("Net response (mean and seed SD)")
+    axes[1].set_title("Inferred synthetic perturbation type", fontsize=9)
+    axes[1].legend(fontsize=7)
+    fig.suptitle("Locked final points; source diagnostic; GG uses a different cut", fontsize=10)
+    fig.tight_layout()
+    for extension in ["png", "pdf"]:
+        fig.savefig(out / f"paired_response_components.{extension}", dpi=180)
+    plt.close(fig)
+
+
 def analyze(root, inp):
     mpath = inp / "run_manifest.json"
     manifest = json.loads(mpath.read_text(encoding="utf-8"))
@@ -123,6 +169,7 @@ def analyze(root, inp):
     counts.to_csv(out / "counts.csv", index=False)
     _, _, seeds, summary = summarize(valid)
     pretraining_effects(seeds).to_csv(out / "pretraining_effects.csv", index=False)
+    response_details(frame, out)
     lines = ["# Source paired-response audit", "", "Original checkpoint/selection/AOSS/main scoring unchanged.",
              "Diagnostic identity: raw_local_sensitivity = normal_spatial_contrast + net_local_response.",
              "Equal datasets within modality, equal four source modalities within fold, equal five folds within seed; SD over 3 seeds.",
@@ -132,6 +179,8 @@ def analyze(root, inp):
     lines += ["", "Perturbation kinds and training membership are inferred, not historical provenance.",
               "Per-image averages are not a reconstruction of original AOSS aggregation. Net response is not a new selection metric.",
               "Membership strata may omit empty groups; consult counts and training_membership.csv. No patient CI or significance claim.",
+              "Inferred membership coverage and negative response counts are exported without treating repeated images as independent patients.",
+              "Source radiology/non-radiology summaries describe source response, not held-out target group performance.",
               "Conditional source/target effects and interaction: pretraining_effects.csv. Original GG uses a different cut, so contrasts mix backbone and stitch-location differences.",
               "Large server arrays/weights stat-only. Source response does not establish sensitivity to clinical anomalies."]
     (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

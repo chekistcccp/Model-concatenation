@@ -1319,3 +1319,17 @@ source-only AOSS。先验证真实 target 中间层接回 tail 的恒等性、�
 `python -m src.analyze_paired_response --input results/transfer/paired_response_audit`。
 见 [PAIRED_RESPONSE_AUDIT_CN.md](PAIRED_RESPONSE_AUDIT_CN.md)。
 原 zero-shot selection、主评分和结果保留；训练样本成员与扰动类型推断须披露限制。
+
+# 40. 2026 文献对照后：原 screening 全网格配对诊断
+
+固定 final 点配对实验取回后，继续连接第二环（扰动新增响应）与第三环
+（source-only AOSS 的 stitch-selection 能力）。检索已核验 2026 主会/期刊原文，
+方法与后续优先级见 [PUBLICATION_GAP_PLAN_2026_CN.md](PUBLICATION_GAP_PLAN_2026_CN.md)；
+具体结果与发表差距报告留在 results/analysis，不提交 Git。
+
+一键入口 `bash run_screen_response_audit.sh`，只复用 36 原 screening job / 180
+checkpoint：原 seed=11、4 epochs/500 normal per source modality，不补训练、不重选。
+导出全网格配对分解并重放 900 原 AOSS 分量，随后 CPU 与既有 stitchmap 事后对照。
+净响应只作诊断；原 score、grid、预算、selected_configs 和 final 保留。
+原 global 五折选点的跨 fold 信息边界继续披露，不能声称本补充实验已修复该问题。
+公平基线、组件对照、定位/外部验证仍是后续研究内容，不能称此入口已完成全部。
