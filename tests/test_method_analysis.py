@@ -10,6 +10,7 @@ import yaml
 from src.analyze_method_controls import ARMS, DATASETS, MAPPING, validate
 from src.followup_io import common_jobs
 from src.prediction_io import sha256
+from src.method_schedule import worker_path
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -86,6 +87,17 @@ class MethodAnalysisTests(unittest.TestCase):
             out=Path(tmp);m=fixture(out)
             self.assertEqual(len(m["output_sha256"]),306)
             _,data=validate(out);self.assertEqual(len(data["rows"]),288)
+            # New distributed receipts retain compatibility with prior serial returns.
+            for phase in ["compose","train","evaluate"]:
+                for i,j in enumerate(m["jobs"]):
+                    write(worker_path(out,phase,j["job"]),dict(status="complete",phase=phase,job=j["job"],gpu=[0,2][i%2],
+                        device_name="CPU fixture, not a GPU run",device_total_memory=1,compute_capability=[0,0]))
+                    log=out/"logs"/phase/f"{j['job']}.log";log.parent.mkdir(parents=True,exist_ok=True);log.write_text("fixture")
+            m.update(scheduling="one_job_per_gpu_v1",gpus=[0,2],training_completed_sha256=sha256(out/"training_completed.json"))
+            m["output_sha256"]={str(p.relative_to(out)).replace("\\","/"):sha256(p) for p in out.rglob("*") if p.is_file() and p.name!="run_manifest.json"}
+            write(out/"run_manifest.json",m)
+            self.assertEqual(len(m["output_sha256"]),378)
+            validate(out)
             p=out/"training_samples.json";original=p.read_bytes();s=json.loads(original)
             s["rows"][0]["samples"][0]["source_modality"]=s["rows"][0]["held_out"]
             write(p,s);m["output_sha256"]["training_samples.json"]=sha256(p);write(out/"run_manifest.json",m)

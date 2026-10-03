@@ -1377,3 +1377,19 @@ CPU 接收分析入口 `python -m src.analyze_method_controls --input results/tr
 本轮九篇正式 2026 文献见 PUBLICATION_GAP_PLAN_2026_CN.md。强公平基线、
 AUPRO/外部验证、新训练目标与全目标端到端效率尚未完成，不得将单元测试当 GPU 结果。
 代码/测试/方法文档同步仓库；数字、报告、图、日志、权重及运行包保持忽略。
+
+# 42. 方法对照多卡独立调度（2026-10-03）
+
+按用户要求，`GPUS=0,1,2,3 bash run_method_controls.sh` 将 pair×seed 独立任务
+分配给指定 GPU；每卡同时一个进程，空闲后接下一个任务。未指定 GPUS 时默认
+auto 使用全部可见 GPU；GPUS=0 或旧 GPU_ID=0 仍支持单卡。CUDA_VISIBLE_DEVICES
+重映射后按可见索引指定，不能把物理卡号混入可见索引。
+
+研究设计、正常 source 样本、seed、初始化、预算、AOSS、评分和原选择全部保留。
+同一任务内所有组件对照同卡执行。实体验证完成→全部 source 训练完成并验证
+180 个控制 checkpoint→统一 target 评估，阶段之间设全局等待。不能哪个任务
+训练完就提前查看 target 并调整未完成训练的任务。
+
+coordinator 独占全局 manifest/summary 写入；worker 按 phase/job 写独立 receipts、
+预测、checkpoint 和日志。任一失败停止其余进程，保留失败证据，不自动重训/续跑。
+返回包仍排除所有 .pt，新增 workers/ 和 logs/；代码/文档同步，分析结果不提交。

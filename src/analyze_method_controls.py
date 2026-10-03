@@ -38,10 +38,23 @@ def validate(directory):
             and not m["training_uses_synthetic_anomalies"], "Invalid method experiment protocol/receipt")
     require(len(m["jobs"]) == 12 and m["arms"] == ARMS and m["n_metric_rows"] == 288
             and len(m["weights_sha256"]) == 184, "Incomplete method experiment")
-    require(len(m["output_sha256"]) == 306 and {"metrics.json", "training_completed.json", "training_samples.json", "composition_checks.csv", "references/config.json"}
+    scheduling = m.get("scheduling")
+    require(scheduling in [None, "one_job_per_gpu_v1"], "Unknown GPU scheduling protocol")
+    expected_outputs = 378 if scheduling else 306
+    require(len(m["output_sha256"]) == expected_outputs and {"metrics.json", "training_completed.json", "training_samples.json", "composition_checks.csv", "references/config.json"}
             <= set(m["output_sha256"]), "Incomplete returned metrics/predictions/references")
     for name, digest in m["output_sha256"].items():
         require(sha256(directory / name) == digest, f"Output hash differs: {name}")
+    if scheduling:
+        from .method_schedule import collect
+        require(m["gpus"] and len(set(m["gpus"])) == len(m["gpus"]), "Duplicate/empty GPU plan")
+        for phase in ["compose", "train", "evaluate"]:
+            collect(directory, phase, m["jobs"], m["gpus"])
+            for job in m["jobs"]:
+                require(f"workers/{phase}/{job['job']}.json" in m["output_sha256"]
+                        and f"logs/{phase}/{job['job']}.log" in m["output_sha256"], "Missing GPU worker evidence/log")
+        require(sha256(directory / "training_completed.json") == m["training_completed_sha256"],
+                "Training receipt differs from evaluation barrier")
     training = read(directory / "training_completed.json")
     require(training["no_target_data_used"] and training["no_reselection"] and len(training["rows"]) == 180,
             "Missing all-training-before-target-evaluation receipt")
@@ -213,6 +226,7 @@ global AOSS 跨 fold 信息边界保留；不能宣称全局选择严格排除�
 完整 bundle/checkpoint 留在服务器；返回包仅含指标、预测、引用、哈希和日志。返回包无法本地重放权重，应核对服务器成功 receipt。
 部署验证仅为正常 source 抽样；不替代全部目标图像端到端性能/延迟验证。
 缓存与新鲜图像路径的差异单独报告，不因 live 路径一致便宣称旧 cache 精确等价。
+多卡运行时，每张卡同时一个 pair/seed 任务，三阶段之间设全局等待；各任务实际 GPU、设备型号及日志在 workers/ 与 logs/。
 """
     (out / "report_CN.md").write_text(text, encoding="utf-8")
     (out / "audit.json").write_text(json.dumps(dict(status="complete", selection_updated=False,

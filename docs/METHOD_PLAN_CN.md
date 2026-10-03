@@ -54,10 +54,22 @@ live parity 要在 1e-6 内匹配原在线路径。fresh source/target/cache/map
 服务器手动 git pull，激活成功 paired-response 的原环境，不自动升级依赖：
 
 ```bash
-GPU_ID=0 bash run_method_controls.sh
+GPUS=0,1,2,3 bash run_method_controls.sh
 ```
 
-PYTHON_BIN 可指定该环境 Python 绝对路径。单 GPU 顺序执行，时长依机器而定。
+PYTHON_BIN 可指定该环境 Python 绝对路径。GPUS 指定可见 CUDA 索引；不指定时默认
+auto 使用全部可见 GPU，单卡可用 GPUS=0；旧 GPU_ID=0 仍兼容。设置了
+CUDA_VISIBLE_DEVICES 时，GPUS 使用其重编号后的 0、1 等索引。
+
+调度单位为 pair×seed（共 12 jobs），每张卡同时一个独立进程；该任务内五 folds
+及 matched_tail/no_tail/untrained_adapter 同卡依次运行，不改变 batch、epoch、
+样本、初始化或随机 seed。模型实体验证、source 训练、target 评估分三阶段，各阶段
+全部 12 任务完成才推进；全体 180 控制 checkpoint 验哈希后才开始任何目标评估。
+空闲卡动态接下一个任务。任一 worker 失败即停止其余 worker，保留产物和日志；
+SIGTERM/中断也走停止与失败记录流程，SIGKILL/断电仍无法保证。
+每阶段每任务实际 GPU、设备型号、显存与日志在 workers/ 和 logs/。GPU 算术差异
+可能影响浮点结果，原指标仍必须通过既定重放容差。多进程同时占用主机内存及读
+cache，资源不足可减少 GPUS，不通过缩小 batch 或训练预算回退。时长依机器而定。
 保留原 final/selected、completed mechanism/paired artifacts、cache/train/perturb/test、
 目标 masks、完整 CNN/ViT 权重和正常 source 原图。无下载/建 cache/训练补缺回退。
 无需先运行 screen-response 网格审计。
@@ -66,6 +78,7 @@ PYTHON_BIN 可指定该环境 Python 绝对路径。单 GPU 顺序执行，时�
 预期 288 dataset metric rows、240 fold AOSS rows、144 original replay checks，
 180 控制 checkpoint 和四 bundle。CPU 分析核对所有输出 hash，独立从 288 prediction
 CSV 重算 AUROC/AP、核对身份/顺序/覆盖，生成同 seed contrast 表和图。
+多卡调度新增 36 个 worker receipts 和 36 份任务日志；分析同时核验其完整性。
 
 结束下载 `[TRANSFER] results/transfer/method_controls_run_日期时间_后缀.tar.gz`，
 放本地 results/transfer/ 并在该目录解压。包含指标、预测、引用、hash、分析和日志；

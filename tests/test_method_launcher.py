@@ -16,7 +16,7 @@ if os.name=="nt" and Path("C:/Program Files/Git/bin/bash.exe").is_file(): BASH="
 
 @unittest.skipUnless(BASH, "Bash unavailable")
 class MethodLauncherTests(unittest.TestCase):
-    def launch(self, mode):
+    def launch(self, mode, gpu_setting=None, expected_gpus="auto"):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp).resolve()
             shutil.copyfile(ROOT/"run_method_controls.sh", root/"run_method_controls.sh")
@@ -28,6 +28,7 @@ from pathlib import Path
 a=sys.argv[1:]; mode=os.environ["FIXTURE_MODE"]
 if a==["--version"]: print("fixture");sys.exit(0)
 if a[:2]==["-m","src.method_controls"]:
+ assert a[a.index("--gpus")+1]==os.environ["EXPECTED_GPUS"],a
  if "--check-only" in a: sys.exit(7 if mode=="preflight_failure" else 0)
  p=Path("results/followup/method_controls");p.mkdir(parents=True)
  (p/"run_manifest.json").write_text(json.dumps(dict(status="complete")))
@@ -46,7 +47,10 @@ raise RuntimeError(a)
                 (p/"run_manifest.json").write_text('{"status":"failed","evidence":"preserve"}')
                 (p/"keep.pt").write_text("retain")
             env=dict(os.environ, PYTHON_BIN=fake.as_posix(),REAL_PYTHON=Path(sys.executable).as_posix(),
-                     FIXTURE_HELPER=helper.as_posix(),FIXTURE_MODE=mode,GIT_DIR=(ROOT/".git").as_posix())
+                     FIXTURE_HELPER=helper.as_posix(),FIXTURE_MODE=mode,GIT_DIR=(ROOT/".git").as_posix(),
+                     EXPECTED_GPUS=expected_gpus)
+            env.pop("GPUS",None);env.pop("GPU_ID",None)
+            if gpu_setting:env[gpu_setting[0]]=gpu_setting[1]
             result=subprocess.run([BASH,"run_method_controls.sh"], cwd=root,env=env,capture_output=True,text=True,timeout=45)
             archives=list((root/"results/transfer").glob("*.tar.gz"));self.assertEqual(len(archives),1,result.stdout+result.stderr)
             with tarfile.open(archives[0]) as archive:
@@ -66,6 +70,8 @@ raise RuntimeError(a)
     def test_failed_preflight_is_packaged(self): self.launch("preflight_failure")
     def test_failed_analysis_retains_results(self): self.launch("analysis_failure")
     def test_existing_evidence_preserved(self): self.launch("existing")
+    def test_explicit_multi_gpu_setting_forwarded(self): self.launch("success",("GPUS","0,2,3"),"0,2,3")
+    def test_legacy_gpu_id_still_works(self): self.launch("success",("GPU_ID","2"),"2")
 
 
 if __name__=="__main__": unittest.main()

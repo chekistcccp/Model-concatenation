@@ -10,6 +10,7 @@ import argparse
 import csv
 import math
 import platform
+import signal
 import subprocess
 from pathlib import Path
 
@@ -101,7 +102,8 @@ def preflight(cfg, config):
             for r in records[ds][:2]:
                 require(Path(r["image"]).is_file(), f"Need source image for composed-model check: {r['image']}")
                 protected.append(Path(r["image"]))
-    protected += [Path(__file__), Path(__file__).with_name("composed_detector.py")]
+    protected += [Path(__file__), Path(__file__).with_name("composed_detector.py"),
+                  Path(__file__).with_name("method_schedule.py")]
     hashes = {str(p): sha256(p) for p in sorted(set(protected), key=str)}
     stats = {str(p): dict(size=p.stat().st_size, mtime_ns=p.stat().st_mtime_ns)
              for p in sorted(set(arrays), key=str)}
@@ -162,7 +164,7 @@ def new_checkpoint(out, arm, job, held):
     return out / "checkpoints" / arm / job["job"] / f"{held}.pt"
 
 
-def compose_checks(cfg, jobs, records, out, device):
+def compose_checks(cfg, jobs, records, out, device, write_summary=True):
     rows = []
     for job in jobs:
         print(f"[composition] {job['job']}", flush=True)
@@ -219,11 +221,12 @@ def compose_checks(cfg, jobs, records, out, device):
     # Stable CSV schema even for cells without a bundle round-trip check.
     for r in rows:
         r.setdefault("bundle_roundtrip_delta", "")
-    write_csv(out / "composition_checks.csv", rows)
+    if write_summary:
+        write_csv(out / "composition_checks.csv", rows)
     return rows
 
 
-def train_phase(cfg, jobs, out, device):
+def train_phase(cfg, jobs, out, device, write_summary=True):
     training, sample_manifests = [], []
     for job in jobs:
         target = load_target(cfg, job["target_backbone"], device)
@@ -255,13 +258,16 @@ def train_phase(cfg, jobs, out, device):
             del x, y
         del target
         torch.cuda.empty_cache()
-    require(len(training) == 180, "Need 120 trained and 60 untrained controls before target evaluation")
-    write_json(out / "training_samples.json", dict(rows=sample_manifests))
-    write_json(out / "training_completed.json", dict(no_target_data_used=True, no_reselection=True, rows=training))
-    return training
+    require(len(training) == 15 * len(jobs), "Incomplete source training controls")
+    if write_summary:
+        require(len(training) == 180, "Need all source controls before target evaluation")
+        write_json(out / "training_samples.json", dict(rows=sample_manifests))
+        write_json(out / "training_completed.json", dict(no_target_data_used=True, no_reselection=True, rows=training))
+        return training
+    return dict(rows=training, samples=sample_manifests)
 
 
-def evaluate_phase(cfg, jobs, out, device):
+def validate_training_receipt(cfg, jobs, out, checkpoint_jobs=None):
     require((out / "training_completed.json").is_file(), "Finish all source training before evaluating target")
     receipt = read_json(out / "training_completed.json")
     training = receipt.get("rows", [])
@@ -272,10 +278,18 @@ def evaluate_phase(cfg, jobs, out, device):
             "Incomplete all-source-training receipt")
     by_job = {j["job"]: j for j in jobs}
     for r in training:
+        if checkpoint_jobs is not None and r["job"] not in checkpoint_jobs:
+            continue
         require(sha256(new_checkpoint(out, r["arm"], by_job[r["job"]], r["held_out"])) == r["checkpoint_sha256"],
                 "Control weights changed after source training; target evaluation refused")
+
+
+def evaluate_phase(cfg, jobs, out, device, evaluation_jobs=None, write_summary=True):
+    chosen = jobs if evaluation_jobs is None else evaluation_jobs
+    require(all(j in jobs for j in chosen), "Evaluation job outside the locked matrix")
+    validate_training_receipt(cfg, jobs, out, None if evaluation_jobs is None else {j["job"] for j in chosen})
     metrics, aoss_rows, replays = [], [], []
-    for job in jobs:
+    for job in chosen:
         target = load_target(cfg, job["target_backbone"], device)
         original_rows = []
         for held in target_modalities(cfg):
@@ -311,20 +325,35 @@ def evaluate_phase(cfg, jobs, out, device):
         replays.extend(dict(job=job["job"], **r) for r in replay)
         del target
         torch.cuda.empty_cache()
-    require(len(metrics) == 288 and len(aoss_rows) == 240 and len(replays) == 144, "Incomplete method comparison matrix")
-    write_json(out / "metrics.json", dict(rows=metrics, aoss_rows=aoss_rows, replays=replays))
-    return metrics
+    require(len(metrics) == 24 * len(chosen) and len(aoss_rows) == 20 * len(chosen)
+            and len(replays) == 12 * len(chosen), "Incomplete method comparison matrix")
+    payload = dict(rows=metrics, aoss_rows=aoss_rows, replays=replays)
+    if write_summary:
+        require(len(chosen) == 12, "Aggregate evaluation requires all locked jobs")
+        write_json(out / "metrics.json", payload)
+        return metrics
+    return payload
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/experiment.yaml")
     ap.add_argument("--gpu", type=int, default=0)
+    ap.add_argument("--gpus", help="Visible CUDA indices, e.g. 0,1,2,3; auto uses all visible GPUs")
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--worker-phase", choices=["compose", "train", "evaluate"])
+    ap.add_argument("--job")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    from .method_schedule import parse_gpus, run_phases, run_worker
+    if args.worker_phase:
+        require(not args.check_only and args.gpus is None and args.job, "Invalid worker arguments")
+        run_worker(cfg, args.config, args.worker_phase, args.job, args.gpu)
+        return
+    require(args.job is None, "--job is only available to a phase worker")
+    gpus = parse_gpus(args.gpus if args.gpus is not None else str(args.gpu), torch.cuda.device_count())
     jobs, records, hashes, stats = preflight(cfg, args.config)
-    print("[preflight] 12 locked jobs; 60 original + 120 trained + 60 untrained controls; no selection changes", flush=True)
+    print(f"[preflight] GPUs={gpus}; 12 locked jobs; 60 original + 120 trained + 60 untrained controls; no selection changes", flush=True)
     if args.check_only:
         return
     require(torch.cuda.is_available(), "This full experiment requires an available CUDA GPU")
@@ -336,23 +365,21 @@ def main():
                     git_head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                     no_reselection=True, score_unchanged=True, original_budget_unchanged=True,
                     training_uses_target_data=False, training_uses_synthetic_anomalies=False,
-                    global_selection_fold_exclusive=False, weights_excluded_from_transfer=True)
+                    global_selection_fold_exclusive=False, weights_excluded_from_transfer=True,
+                    scheduling="one_job_per_gpu_v1", gpus=gpus)
     write_json(out / "run_manifest.json", manifest)
     try:
-        device = torch.device(f"cuda:{args.gpu}")
-        configure_torch(cfg["project"].get("allow_tf32", True))
         for job in jobs:
             write_json(out / "references" / f"{job['job']}.json", read_json(job["reference"]))
         write_json(out / "references/config.json", cfg)
         write_json(out / "references/selected_configs.json", read_json(Path(cfg["paths"]["results_dir"]) / "selected_configs.json"))
-        composition = compose_checks(cfg, jobs, records, out, device)
-        manifest["phase"] = "source_training"
-        write_json(out / "run_manifest.json", manifest)
-        train_phase(cfg, jobs, out, device)
-        require(inputs_unchanged(hashes, stats), "Original inputs changed before target evaluation")
-        manifest["phase"] = "target_evaluation_after_all_training"
-        write_json(out / "run_manifest.json", manifest)
-        metrics = evaluate_phase(cfg, jobs, out, device)
+        def stop(signum, frame):
+            raise SystemExit(128 + signum)
+        previous = signal.signal(signal.SIGTERM, stop)
+        try:
+            composition, metrics = run_phases(cfg, jobs, args.config, out, gpus, manifest, hashes, stats)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
         require(inputs_unchanged(hashes, stats), "Original inputs changed during method experiment")
         weights = sorted(out.rglob("*.pt"))
         require(len(weights) == 184, "Need 180 control checkpoints and four composition bundles")

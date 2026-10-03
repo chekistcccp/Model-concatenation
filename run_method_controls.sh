@@ -4,7 +4,7 @@ set -Eeuo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 REPO_ROOT="$PWD"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-GPU_ID="${GPU_ID:-0}"
+GPUS="${GPUS:-${GPU_ID:-auto}}"
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}" MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
 mkdir -p results/transfer
@@ -40,12 +40,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 run_step() { "$@" 2>&1 | tee -a "$LOG_FILE"; }
 {
-    printf 'Repository: %s\nPython: %s\nGPU: %s\n' "$REPO_ROOT" "$PYTHON_BIN" "$GPU_ID"
+    printf 'Repository: %s\nPython: %s\nGPUs: %s\n' "$REPO_ROOT" "$PYTHON_BIN" "$GPUS"
+    printf 'CUDA_VISIBLE_DEVICES: %s\n' "${CUDA_VISIBLE_DEVICES:-unset}"
     printf 'Git HEAD: '; git rev-parse HEAD
     printf 'Method controls; normal source training; original AOSS/score/grid preserved.\n'
 } | tee -a "$LOG_FILE"
-if [[ ! "$GPU_ID" =~ ^[0-9]+$ ]] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    printf '[ERROR] Activate the successful paired-response environment and set a valid GPU_ID.\n' | tee -a "$LOG_FILE"
+if [[ "$GPUS" != auto && ! "$GPUS" =~ ^[0-9]+(,[0-9]+)*$ ]] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    printf '[ERROR] Activate the successful paired-response environment; GPUS must be auto or indices such as 0,1,2,3.\n' | tee -a "$LOG_FILE"
     exit 2
 fi
 if [[ -d results/followup/method_controls ]] && [[ -n "$(ls -A results/followup/method_controls)" ]]; then
@@ -53,8 +54,8 @@ if [[ -d results/followup/method_controls ]] && [[ -n "$(ls -A results/followup/
     exit 2
 fi
 run_step "$PYTHON_BIN" --version
-run_step "$PYTHON_BIN" -m src.method_controls --check-only
-run_step "$PYTHON_BIN" -m src.method_controls --gpu "$GPU_ID"
+run_step "$PYTHON_BIN" -m src.method_controls --gpus "$GPUS" --check-only
+run_step "$PYTHON_BIN" -m src.method_controls --gpus "$GPUS"
 run_step "$PYTHON_BIN" -m src.analyze_method_controls
 cp -a -- "$REPO_ROOT/results/analysis/method_controls" "$RUN_DIR/analysis"
 printf '[SUCCESS] Fixed method controls complete; download the TRANSFER archive.\n' | tee -a "$LOG_FILE"

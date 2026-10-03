@@ -2,7 +2,7 @@
 
 研究主线：以预训练 CNN/Transformer 的参数模块拼接形成新模型，实现零样本异常检测。
 医学预训练矩阵用于验证和解释方法。最新固定方法对照与服务器一键入口见
-[docs/METHOD_PLAN_CN.md](docs/METHOD_PLAN_CN.md)：`GPU_ID=0 bash run_method_controls.sh`。
+[docs/METHOD_PLAN_CN.md](docs/METHOD_PLAN_CN.md)：`GPUS=0,1,2,3 bash run_method_controls.sh`。
 原 AOSS、选点、预算和评分保留；具体分析结果与模型权重不提交 Git。
 
 当前使用方式已经简化为：
