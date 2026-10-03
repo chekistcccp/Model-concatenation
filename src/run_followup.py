@@ -117,6 +117,44 @@ def common_command(cfg, config_path, job, output):
             "--score-modes", "contrast_topk", "--save-checkpoints"]
 
 
+def validate_existing_common_plan(out, plan_hash, jobs, hashes, versions, python):
+    """Reject incompatible reuse before writes and identify recorded differences."""
+    if not any(out.glob("*_seed*.json")):
+        return
+    manifest = out / "run_manifest.json"
+    previous = read_json(manifest) if manifest.is_file() else {}
+    if previous.get("plan_sha256") == plan_hash:
+        return
+    differences = []
+    if not manifest.is_file():
+        differences.append(f"Missing provenance manifest: {manifest}")
+    if previous.get("stage") != "common_stitch":
+        differences.append("Recorded stage differs or is missing")
+    if previous.get("jobs") != jobs:
+        differences.append("Locked job matrix/reference paths differ or are missing")
+    old_hashes = previous.get("original_sha256", {})
+    changed = [p for p in sorted(set(old_hashes) | set(hashes)) if old_hashes.get(p) != hashes.get(p)]
+    for p in changed[:10]:
+        state = "Changed" if p in old_hashes and p in hashes else "Added" if p in hashes else "Missing"
+        differences.append(f"{state} protected input: {p}")
+    if len(changed) > 10:
+        differences.append(f"... {len(changed) - 10} more protected input differences")
+    for package in sorted(set(previous.get("versions", {})) | set(versions)):
+        old = previous.get("versions", {}).get(package)
+        if old != versions.get(package):
+            differences.append(f"Package {package}: previous={old!r}; current={versions.get(package)!r}")
+    if previous.get("python") != python:
+        differences.append(f"Python: previous={previous.get('python')!r}; current={python!r}")
+    if not differences:
+        differences.append("Stored comparison fields match, but the full historical plan hash differs; reuse remains blocked")
+    raise ValueError("Existing common-point outputs belong to different/unrecorded inputs; reuse blocked.\n"
+                     f"Manifest: {manifest}\nPrevious plan: {previous.get('plan_sha256')}\nCurrent plan: {plan_hash}\n"
+                     + "\n".join(differences)
+                     + "\nExisting outputs and manifest were not changed. Keep the completed evidence; "
+                     "do not delete it or bypass this check. Current method experiments use run_method_controls.sh; "
+                     "see docs/METHOD_PLAN_CN.md.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/experiment.yaml")
@@ -129,7 +167,7 @@ def main():
         print(f"[followup] Diagnostics: {len(jobs)} locked jobs, {len(cases)} images (random/hard overlap deduplicated); no training")
     else:
         print(f"[followup] Common stitch: {len(jobs)} jobs at {POINTS}; 12 original results reused, 12 supplemental training jobs")
-    if args.check_only:
+    if args.check_only and args.stage == "diagnostics":
         print("[followup] Required inputs checked; no files written, no training, no selection")
         return
     out = Path(cfg["paths"]["results_dir"]) / "followup" / args.stage
@@ -138,10 +176,8 @@ def main():
     plan_hash = hashlib.sha256(json.dumps(dict(stage=args.stage, jobs=jobs, cases=cases, input_sha256=hashes,
                                              versions=versions, python=sys.version), sort_keys=True).encode()).hexdigest()
     manifest_path = out / "run_manifest.json"
-    if args.stage == "common_stitch" and any(out.glob("*_seed*.json")):
-        previous = read_json(manifest_path) if manifest_path.is_file() else {}
-        if previous.get("plan_sha256") != plan_hash:
-            raise ValueError("Existing common-point outputs belong to different/unrecorded inputs; use a separate archived run")
+    if args.stage == "common_stitch":
+        validate_existing_common_plan(out, plan_hash, jobs, hashes, versions, sys.version)
     commands = []
     if args.stage == "common_stitch":
         for job in jobs:
@@ -162,6 +198,9 @@ def main():
             commands.append((job["job"], [sys.executable, "-m", "src.followup_worker", "--config", args.config,
                 "--reference-final", job["reference"], "--case-plan", str(out / "case_plan.json"),
                 "--output-dir", str(out / "jobs" / job["job"])]))
+    if args.check_only:
+        print("[followup] Required inputs, existing plan/results/checkpoints checked; no files written, no training, no selection")
+        return
     if commands:
         import torch
         from .common import gpu_ids

@@ -93,6 +93,17 @@ results/followup/common_stitch/
 失败或中断的未完成 job 会从该 job 重新训练；不使用部分训练状态替代完整结果。
 若旧输出属于不同输入，入口拒绝混用，应单独归档那次补充运行后再执行。
 
+`common_stitch --check-only` 也会检查已有计划、结果和 checkpoint。计划冲突时，
+错误列出旧/新 plan hash，以及记录可比较的受保护文件、包版本、Python 或 job
+矩阵差异；检查在写 manifest/运行 worker 之前完成。即使记录字段未能解释 hash
+差异，也仍拒绝复用，不能删除 manifest 或放宽检查强行通过。
+
+若看到 `Existing common-point outputs belong to different/unrecorded inputs`，先保留
+旧结果并检查上述差异。已完成并取回的共同点对照无需为后续方法实验重新运行；
+当前参数拼接方法对照入口是 `GPUS=0,1,2,3 bash run_method_controls.sh`，前提见
+[METHOD_PLAN_CN.md](METHOD_PLAN_CN.md)。不要重复启动旧 predictions/diagnostics/
+common_stitch 串行流程来替代当前方法实验。
+
 ## 3. 如何判断完成
 
 两阶段都检查 `run_manifest.json`：`status` 必须是 `complete`，

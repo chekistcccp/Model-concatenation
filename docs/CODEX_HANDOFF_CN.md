@@ -1393,3 +1393,15 @@ auto 使用全部可见 GPU；GPUS=0 或旧 GPU_ID=0 仍支持单卡。CUDA_VISI
 coordinator 独占全局 manifest/summary 写入；worker 按 phase/job 写独立 receipts、
 预测、checkpoint 和日志。任一失败停止其余进程，保留失败证据，不自动重训/续跑。
 返回包仍排除所有 .pt，新增 workers/ 和 logs/；代码/文档同步，分析结果不提交。
+
+# 43. 旧 common_stitch 计划冲突的定位（2026-10-03）
+
+`run.log` 中 predictions 和 diagnostics 完成后，旧 common_stitch 被已有输入
+计划 hash 检查阻止。这不证明 GPU 或新方法调度故障；也不能绕过保护复用来源
+不同/不完整的结果。新增差异说明，并让 common_stitch 的 --check-only 执行同一
+已有计划、结果和 checkpoint 检查；失败时不写入 manifest，不启动训练。
+
+错误报告可比较的文件哈希键、包版本、Python、job 矩阵和旧/新 plan hash。
+无法解释的 plan 差异继续拒绝，不自动删结果、归档或重训。详见
+[FOLLOWUP_EXPERIMENTS_CN.md](FOLLOWUP_EXPERIMENTS_CN.md)。当前主线仍运行
+run_method_controls.sh；已完整取回的历史共同点结果无需重新运行来推进方法实验。
