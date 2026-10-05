@@ -157,6 +157,7 @@ def summaries(rows):
     seed_rows, differences = [], []
     groups = dict(overall=DATASETS, radiology=["Brain", "liver", "RSNA"],
                   non_radiology=["RESC", "OCT2017", "camelyon16"])
+    groups.update({d: [d] for d in DATASETS})
     for arm in ARMS:
         for pair in PAIRS:
             for seed in [11, 22, 33]:
@@ -190,6 +191,59 @@ def summaries(rows):
     return seed_rows, summary, differences
 
 
+def contrast_summary(differences):
+    result = []
+    for key in sorted({(r['pair'], r['group'], r['metric'], r['contrast'], r['datasets']) for r in differences}):
+        values = [r['delta'] for r in differences
+                  if (r['pair'], r['group'], r['metric'], r['contrast'], r['datasets']) == key]
+        result.append(dict(zip(['pair', 'group', 'metric', 'contrast', 'datasets'], key),
+                           mean_delta=float(np.mean(values)), paired_seed_sd=float(np.std(values, ddof=1)),
+                           n_positive_seeds=sum(v > 0 for v in values), n_seeds=len(values)))
+    return result
+
+
+def plot_results(summary, contrasts, out):
+    try:
+        import matplotlib
+    except ModuleNotFoundError as exc:
+        if exc.name != 'matplotlib':
+            raise
+        print('[analysis] matplotlib unavailable; validated tables/report saved; plots skipped.')
+        return False
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), layout='constrained')
+    for ax, metric in zip(axes, ['image_auroc', 'image_aupr']):
+        for i, arm in enumerate(ARMS):
+            take = [next(r for r in summary if r['arm'] == arm and r['pair'] == p and r['group'] == 'overall' and r['metric'] == metric) for p in PAIRS]
+            ax.errorbar(np.arange(4) + (i-1.5)*.13, [r['mean'] for r in take], yerr=[r['seed_sd'] for r in take],
+                        fmt='o', capsize=3, label=arm)
+        ax.set_xticks(range(4), ['MM', 'MG', 'GM', 'GG'])
+        ax.set_ylabel(metric); ax.set_title('Six datasets; mean ± seed SD')
+        if metric == 'image_auroc':
+            ax.axhline(.5, ls='--', color='gray', linewidth=1)
+    axes[0].legend(fontsize=8)
+    fig.savefig(out / 'method_comparison.png', dpi=180); fig.savefig(out / 'method_comparison.pdf'); plt.close(fig)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), layout='constrained')
+    for ax, metric in zip(axes, ['image_auroc', 'pixel_auroc']):
+        values = np.full((len(DATASETS), len(PAIRS)), np.nan)
+        for i, d in enumerate(DATASETS):
+            for j, p in enumerate(PAIRS):
+                take = [r for r in contrasts if r['pair'] == p and r['group'] == d and r['metric'] == metric
+                        and r['contrast'] == 'matched_tail_minus_no_tail']
+                if take:
+                    values[i, j] = take[0]['mean_delta']
+        bound = max(.01, float(np.nanmax(np.abs(values)))) if np.isfinite(values).any() else .01
+        handle = ax.imshow(np.ma.masked_invalid(values), cmap='RdBu', vmin=-bound, vmax=bound)
+        for i, j in np.ndindex(values.shape):
+            ax.text(j, i, f'{values[i,j]:+.3f}' if np.isfinite(values[i,j]) else 'no mask', ha='center', va='center', fontsize=8)
+        ax.set_xticks(range(4), ['MM', 'MG', 'GM', 'GG']); ax.set_yticks(range(6), DATASETS)
+        ax.set_title(f'Tail minus direct reconstruction: {metric}')
+        fig.colorbar(handle, ax=ax, shrink=.7)
+    fig.savefig(out / 'tail_dataset_effects.png', dpi=180); fig.savefig(out / 'tail_dataset_effects.pdf'); plt.close(fig)
+    return True
+
+
 def run(directory, out):
     m, data = validate(directory)
     out.mkdir(parents=True, exist_ok=True)
@@ -197,22 +251,9 @@ def run(directory, out):
     write_csv(out / "seed_macros.csv", seed_rows)
     write_csv(out / "method_summary.csv", summary)
     write_csv(out / "paired_seed_differences.csv", differences)
-    # Input dependence/paired response and medical effects remain supporting evidence.
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4), layout="constrained")
-    for ax, metric in zip(axes, ["image_auroc", "image_aupr"]):
-        for i, arm in enumerate(ARMS):
-            take = [next(r for r in summary if r["arm"] == arm and r["pair"] == p and r["group"] == "overall" and r["metric"] == metric) for p in PAIRS]
-            ax.errorbar(np.arange(4) + (i-1.5)*.13, [r["mean"] for r in take], yerr=[r["seed_sd"] for r in take],
-                        fmt="o", capsize=3, label=arm)
-        ax.set_xticks(range(4), ["MM", "MG", "GM", "GG"])
-        ax.set_ylabel(metric); ax.set_title("Six datasets; mean ± seed SD")
-        if metric == "image_auroc":
-            ax.axhline(.5, ls="--", color="gray", linewidth=1)
-    axes[0].legend(fontsize=8)
-    fig.savefig(out / "method_comparison.png", dpi=180); fig.savefig(out / "method_comparison.pdf"); plt.close(fig)
+    contrasts = contrast_summary(differences)
+    write_csv(out / 'contrast_summary.csv', contrasts)
+    plots = plot_results(summary, contrasts, out)
     text = """# 参数拼接新模型：固定方法对照
 
 主对照为 matched_tail − no_tail：同初始 adapter、同正常 source 样本/顺序、同优化预算，差别是继承的 Transformer 后段。
@@ -228,10 +269,23 @@ global AOSS 跨 fold 信息边界保留；不能宣称全局选择严格排除�
 缓存与新鲜图像路径的差异单独报告，不因 live 路径一致便宣称旧 cache 精确等价。
 多卡运行时，每张卡同时一个 pair/seed 任务，三阶段之间设全局等待；各任务实际 GPU、设备型号及日志在 workers/ 与 logs/。
 """
+    text += '\n## 六数据集图像 AUROC（均值 ± seed SD）\n\n|arm|MM|MG|GM|GG|\n|---|---|---|---|---|\n'
+    for arm in ARMS:
+        take = [next(r for r in summary if (r['arm'], r['pair'], r['group'], r['metric']) ==
+                     (arm, p, 'overall', 'image_auroc')) for p in PAIRS]
+        text += '|' + arm + '|' + '|'.join(f"{r['mean']:.4f} ± {r['seed_sd']:.4f}" for r in take) + '|\n'
+    text += '\n## 预定配对主对照\n\n|pair|指标|后段−直接重建|配对 seed SD|正向 seed 数|覆盖|\n|---|---|---|---|---|---|\n'
+    for r in contrasts:
+        if r['group'] == 'overall' and r['contrast'] == 'matched_tail_minus_no_tail':
+            coverage = r['datasets'].replace('|', ', ')
+            text += f"|{r['pair']}|{r['metric']}|{r['mean_delta']:+.4f}|{r['paired_seed_sd']:.4f}|{r['n_positive_seeds']}/{r['n_seeds']}|{coverage}|\n"
+    text += '\n负差异和单数据集失败完整保留；不翻转分数、不换选点、不挑最佳 arm。三个 seed 的方向一致不等于患者层面的显著性。逐数据集和 radiology 分层见 method_summary.csv 与 contrast_summary.csv。\n'
+    if not plots:
+        text += '\n服务器未安装 matplotlib，本次跳过绘图；表格和科学核验完整。可在本地相同返回包重生成图，不需重训或升级服务器环境。\n'
     (out / "report_CN.md").write_text(text, encoding="utf-8")
     (out / "audit.json").write_text(json.dumps(dict(status="complete", selection_updated=False,
         server_original_inputs_unchanged=True, local_weight_replay=False, n_metrics=len(data["rows"]),
-        n_output_hashes=len(m["output_sha256"])), indent=2), encoding="utf-8")
+        n_output_hashes=len(m["output_sha256"]), plots_generated=plots), indent=2), encoding="utf-8")
     print(f"[analysis] Verified method comparison: {out}")
 
 

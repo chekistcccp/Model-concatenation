@@ -150,3 +150,15 @@ python -m src.analyze_screen_response --input results/transfer/screen_response_a
 新模型的零样本异常检测能力；医学效应和选点证据围绕此主张，不替代方法增量。
 不能据上述检索宣称“首次参数拼接异常检测”，该优先权需要更广年份/术语检索。
 代码、测试和方法计划同步 Git；所有结果/图表/日志/数据/cache/权重保持忽略。
+
+## 组件结果完整后的执行更新（2026-10-05）
+
+新的方法判断必须依据真实取回的四 arm，而不能沿用旧包缺阶段结论。独立分析
+保留 dataset 负结果、图像与定位的差别以及三 seed 方向；数值留 results/analysis/。
+继承后段不优于 direct reconstruction 时，医学效应或 source AOSS 不能弥补方法
+增量缺失。Mai 等 self-stitch 与 ICML 不变性分析所提示的容量/功能性证据仍欠缺。
+
+新增可提交下一实验为全目标 RGB 推理与完整 detector 成本，固定四 arm/原选点/
+原评分，详见 METHOD_DEPLOYMENT_PLAN_CN.md。该证据确认真实新模型的表现，不自动
+解决新颖性。后续正常流形瓶颈/结构约束需先独立 source-only development，并与
+FoundAD/PDD/QFAE 区分，再固定容量基线与新外部数据；不直接把已看 target 改成开发集。

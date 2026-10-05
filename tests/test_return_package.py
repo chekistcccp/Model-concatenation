@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from unittest.mock import patch
 import subprocess
 import sys
 import tarfile
@@ -30,6 +31,20 @@ def fixture(path, *, stage="method_controls", data=b"scores", expected=None,
 
 
 class ReturnPackageTests(unittest.TestCase):
+    def test_streaming_handles_manifest_after_payload_without_seeking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'return.tar.gz'
+            payload = b'scores' * 1000
+            manifest = json.dumps(dict(status='complete', output_sha256={'metrics.json': hashlib.sha256(payload).hexdigest()})).encode()
+            with tarfile.open(path, 'w:gz') as package:
+                for name, value in [('method_controls/metrics.json', payload), ('method_controls/run_manifest.json', manifest)]:
+                    member = tarfile.TarInfo(name); member.size = len(value)
+                    package.addfile(member, io.BytesIO(value))
+            with patch('src.audit_return_package.tarfile.open', wraps=tarfile.open) as opened:
+                report = audit(path, ['method_controls'])
+            self.assertTrue(report['ok'])
+            self.assertEqual(opened.call_args.args[1], 'r|*')
+
     def test_valid_package_records_scope_environment_and_hashes_without_extraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "return.tar.gz"; fixture(path)

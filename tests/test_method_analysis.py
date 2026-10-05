@@ -4,10 +4,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
-from src.analyze_method_controls import ARMS, DATASETS, MAPPING, validate
+from src.analyze_method_controls import ARMS, DATASETS, MAPPING, validate, run, contrast_summary
 from src.followup_io import common_jobs
 from src.prediction_io import sha256
 from src.method_schedule import worker_path
@@ -82,6 +83,24 @@ def fixture(out):
 
 
 class MethodAnalysisTests(unittest.TestCase):
+    def test_paired_seed_variation_and_missing_plot_dependency_preserve_tables(self):
+        rows = [dict(pair='p', group='overall', metric='image_auroc', contrast='matched_tail_minus_no_tail',
+                     datasets='Brain', delta=v) for v in [-.1, -.2, -.3]]
+        summary = contrast_summary(rows)[0]
+        self.assertAlmostEqual(summary['mean_delta'], -.2)
+        self.assertAlmostEqual(summary['paired_seed_sd'], .1)
+        self.assertEqual(summary['n_positive_seeds'], 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / 'input'; directory.mkdir(); fixture(directory)
+            out = Path(tmp) / 'output'
+            with patch.dict('sys.modules', {'matplotlib': None}):
+                run(directory, out)
+            self.assertFalse(json.loads((out/'audit.json').read_text())['plots_generated'])
+            self.assertTrue((out/'contrast_summary.csv').is_file())
+            with (out/'method_summary.csv').open() as f:
+                groups = {r['group'] for r in csv.DictReader(f)}
+            self.assertTrue(set(DATASETS) <= groups)
+
     def test_full_matrix_recomputes_predictions_and_rejects_contamination_or_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
             out=Path(tmp);m=fixture(out)

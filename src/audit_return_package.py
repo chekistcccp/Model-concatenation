@@ -47,9 +47,13 @@ def audit(archive, required_stages=()):
     try:
         with archive.open("rb") as stream:
             report["archive_sha256"] = digest(stream)
-        with tarfile.open(archive, "r:*") as package:
+        # A compressed tar is not random-access: repeatedly extractfile() after
+        # getmembers() would re-inflate it for almost every declared output.
+        # Read each payload once, retaining only digests and manifest bytes.
+        with tarfile.open(archive, "r|*") as package:
             members = {}
-            for member in package.getmembers():
+            manifests = {}
+            for member in package:
                 report["member_count"] += 1
                 name = safe_name(member.name)
                 if name in members:
@@ -58,12 +62,18 @@ def audit(archive, required_stages=()):
                     raise ValueError(f"Link/special archive member rejected: {name}")
                 if name == "." and member.isfile():
                     raise ValueError("Archive root cannot be a regular file")
-                members[name] = member
+                members[name] = None
                 report["regular_file_count"] += int(member.isfile())
+                if member.isfile():
+                    with package.extractfile(member) as stream:
+                        if PurePosixPath(name).name == "run_manifest.json":
+                            payload = stream.read()
+                            manifests[name] = payload
+                            members[name] = hashlib.sha256(payload).hexdigest()
+                        else:
+                            members[name] = digest(stream)
 
-            for name, member in members.items():
-                if not member.isfile() or PurePosixPath(name).name != "run_manifest.json":
-                    continue
+            for name, payload in manifests.items():
                 parent = PurePosixPath(name).parent
                 stage = dict(stage=parent.name or ".", manifest=name, status=None,
                              git_head=None, versions=None, python=None,
@@ -71,8 +81,7 @@ def audit(archive, required_stages=()):
                              hash_mismatches=[], errors=[], complete=False)
                 report["stages"].append(stage)
                 try:
-                    with package.extractfile(member) as stream:
-                        manifest = json.load(stream, object_pairs_hook=unique_keys)
+                    manifest = json.loads(payload, object_pairs_hook=unique_keys)
                     if not isinstance(manifest, dict):
                         raise ValueError("Manifest must be a JSON object")
                     for key in ["status", "git_head", "versions", "python"]:
@@ -92,12 +101,10 @@ def audit(archive, required_stages=()):
                         target = (parent / relative).as_posix()
                         if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
                             raise ValueError(f"Invalid SHA256 for output: {output}")
-                        item = members.get(target)
-                        if item is None or not item.isfile():
+                        actual = members.get(target)
+                        if actual is None:
                             stage["missing_outputs"].append(output)
                             continue
-                        with package.extractfile(item) as stream:
-                            actual = digest(stream)
                         if actual != expected.lower():
                             stage["hash_mismatches"].append(dict(path=output, expected=expected, actual=actual))
                         else:

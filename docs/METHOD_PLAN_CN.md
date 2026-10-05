@@ -128,3 +128,14 @@ python -m src.audit_return_package --archive results/transfer/实际方法运行
 
 本方案不保证发表，也不宣称新训练/强基线/外部验证已经完成。
 代码、测试与方法文档同步仓库；具体分析结果、图、日志、权重和运行包保持忽略。
+
+## 完成组件对照后的冻结模型验证（2026-10-05）
+
+组件包完整时先复算其全部预测，保留负对照结果。CPU 分析增加逐 dataset 与配对
+contrast 的 seed SD/方向计数；缺少 matplotlib 时明确跳过图而保留科学核验和表格。
+不能因绘图依赖失败而重训已完成模型。
+
+下一入口 `GPUS=4,5,6,7 bash run_method_deployment.sh` 从目标原图评价现有四 arm，
+同时测完整 detector 成本。它不改变训练、原 AOSS、选点、评分或 cached 主结果。
+详细固定方案、输入条件和返回办法见 [METHOD_DEPLOYMENT_PLAN_CN.md](METHOD_DEPLOYMENT_PLAN_CN.md)。
+算法研发仍需 source-only development 和新的独立数据确认，不能用原图审计代替算法增量。

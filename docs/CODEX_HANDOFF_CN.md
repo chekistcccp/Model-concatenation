@@ -1427,3 +1427,25 @@ method_controls_run_*.tar.gz。src.analyze_method_evidence 增加 --followup、-
 map 定位/完整推理效率 → 冻结方案后的独立来源验证。发现 no_tail 同样有效时，
 需继续发展方法，不能用医学因子分析或 AOSS 诊断替代算法增量。所有数字、图、
 报告和审计 JSON 保持 results/ 忽略；代码、测试和方法说明同步仓库。
+
+# 45. 完成组件对照后的原图模型验证（2026-10-05）
+
+最新 method_controls_run 返回阶段必须实际核验，不沿用历史旧包缺阶段的判断。
+独立 CPU 验证先检查所有 hash/科学边界并从全部 prediction CSV 重算指标。具体
+完整性、异常值、四 arm 数字、逐 dataset 定位和文献差距保存在 results/analysis/。
+不能凭 matched_tail 源域 loss/AOSS 上升宣称检测收益，也不能删负对照或低于随机的结果。
+
+服务器 matplotlib 缺失只影响图；analyze_method_controls 现在保存表格和报告后
+明确跳过图，audit.json 标记 plots_generated。已有完整方法产物重新运行 launcher
+只验证、分析、打包，不重训。archive 审计改为单次流式解压，避免每个 hash 回读 gzip。
+
+新增 run_method_deployment.sh：使用完成 method_controls 的同环境和已冻结四 arm，
+全部目标 RGB 图前向与完整 detector 成本，原选点/AOSS/训练/评分不变。每卡一个
+pair×seed job，保留原图/旧 cache 差异；原图只做 stat 稳定性检查。输出完全独立。
+详见 METHOD_DEPLOYMENT_PLAN_CN.md。返回 method_deployment_run_*.tar.gz，放本地
+results/transfer/ 解压，运行 src.analyze_method_deployment；数字/图不进 Git。
+
+预期 288 metric/prediction cells、240 cost rows、12 worker/log、317 output hashes。
+成本计完整 RGB tensor 前向，排除解码/传输；定位仍原 16×16 网格，不冒称高分辨率
+AUPRO。若实际原图对照仍无后段增量，转入已隔离 target 的 source-only 接口开发，
+固定方案后用新外部数据确认；新颖性、容量匹配基线、临床定位和患者统计仍须补足。
