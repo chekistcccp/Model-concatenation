@@ -26,6 +26,7 @@ finish() {
     if [[ "$packed" == 0 ]]; then mv -- "${ARCHIVE}.tmp" "$ARCHIVE"; packed=$?; fi
     if [[ "$packed" == 0 ]]; then
         printf '\n[TRANSFER] %s\n[LOG] %s\n' "$ARCHIVE" "$LOG_FILE"
+        printf '[RETURN] Download this method_controls_run_*.tar.gz, including method_controls/run_manifest.json.\n'
     else
         printf '\n[ERROR] Packaging failed; retain %s and results/followup/method_controls/\n' "$RUN_DIR" >&2
         if [[ "$status" == 0 ]]; then status=1; fi
@@ -50,8 +51,15 @@ if [[ "$GPUS" != auto && ! "$GPUS" =~ ^[0-9]+(,[0-9]+)*$ ]] || ! command -v "$PY
     exit 2
 fi
 if [[ -d results/followup/method_controls ]] && [[ -n "$(ls -A results/followup/method_controls)" ]]; then
-    printf '[ERROR] Existing method experiment: package unchanged; refuse overwrite/resume.\n' | tee -a "$LOG_FILE"
-    exit 2
+    printf '[CHECK] Existing method outputs: validate before repackaging; no experiment workers will run.\n' | tee -a "$LOG_FILE"
+    if run_step "$PYTHON_BIN" -m src.analyze_method_controls; then
+        cp -a -- "$REPO_ROOT/results/analysis/method_controls" "$RUN_DIR/analysis"
+        printf '[SUCCESS] Existing complete method evidence verified; download the new TRANSFER archive.\n' | tee -a "$LOG_FILE"
+        exit 0
+    else
+        printf '[ERROR] Existing method evidence failed validation; package unchanged; refuse overwrite/resume.\n' | tee -a "$LOG_FILE"
+        exit 2
+    fi
 fi
 run_step "$PYTHON_BIN" --version
 run_step "$PYTHON_BIN" -m src.method_controls --gpus "$GPUS" --check-only

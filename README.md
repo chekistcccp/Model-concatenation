@@ -5,6 +5,19 @@
 [docs/METHOD_PLAN_CN.md](docs/METHOD_PLAN_CN.md)：`GPUS=0,1,2,3 bash run_method_controls.sh`。
 原 AOSS、选点、预算和评分保留；具体分析结果与模型权重不提交 Git。
 
+当前下一步在成功 paired-response 的环境运行：
+
+```bash
+git pull --ff-only
+GPUS=0,1,2,3 bash run_method_controls.sh
+```
+
+已有完整方法产物时，此入口验证后只重新打包；失败产物保留并停止。下载终端
+`[TRANSFER]` 指向的 method_controls_run_*.tar.gz，权重留服务器。不能只根据
+followup_results.tar.gz 的包名判断其含有当前方法对照证据。返回前可用
+`python -m src.audit_return_package --archive <包路径> --require-stage method_controls --output results/analysis/method_return_audit.json`
+检查阶段和哈希，再用 analyze_method_controls 核验科学协议与指标。
+
 当前使用方式已经简化为：
 
 > **你只下载两个 Google Drive 原始压缩包/压缩包组，分别直接放入 `data/` 和 `model/`。不要解压、不要改名。其余模型自动通过 ModelScope 下载。**
@@ -198,8 +211,9 @@ GPUS=0,1,2,3 bash run.sh predictions
 相关和误例候选。区间条件于固定模型，不能当作患者级 CI；所有附加 scoring
 比较仅为 post-hoc 诊断，不能替换主评分。输出仅在 results/ 下，不上传仓库。
 
-下一轮独立入口为 `bash run.sh diagnostics`（固定 checkpoint 的空间/source 诊断）
+历史附属入口为 `bash run.sh diagnostics`（固定 checkpoint 的空间/source 诊断）
 和 `bash run.sh common_stitch`（固定 s2b3/s2b9 对照；复用原 12 jobs，补训 12 jobs）。
 执行前使用 `python -m src.run_followup --stage <stage> --check-only`。
 命令、预算与只取回 `results/followup/` 的清单见
 [补充实验运行与取回说明](docs/FOLLOWUP_EXPERIMENTS_CN.md)。原主实验和选点不变。
+当前参数拼接方法研究优先运行本页开头的 run_method_controls.sh。

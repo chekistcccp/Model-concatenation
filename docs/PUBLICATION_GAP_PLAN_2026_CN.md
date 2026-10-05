@@ -1,6 +1,6 @@
 # 参数拼接零样本异常检测方法：2026 文献对照
 
-检索核验日期：2026-10-03。此文件记录文献与方法计划；具体实验数字、
+检索核验日期：2026-10-05（保留 2026-10-03 的研究计划）。此文件记录文献与方法计划；具体实验数字、
 图表、完整性检查和发表差距判断保存在被忽略的 results/analysis/ 下。
 继续遵守 CODEX_HANDOFF_CN.md 第 1、4、5、8、25、31、38、39 节。
 
@@ -16,18 +16,42 @@
 
 |工作与一次来源|设置与相关性|对本研究的启示（作者判断）|
 |---|---|---|
+|[Revisiting Model Stitching In the Foundation Model Era](https://openaccess.thecvf.com/content/CVPR2026/html/Mai_Revisiting_Model_Stitching_In_the_Foundation_Model_Era_CVPR_2026_paper.html)，CVPR 2026，41342–41351；[全文](https://arxiv.org/html/2603.12433v3)|冻结异构 VFM，通过小接口继承前后模块；最终特征匹配后再做任务训练，并以相同接口的 self-stitch 控制容量|这是最直接的拼接近邻；“异构参数模块+最终特征对齐”已有先例。当前方法贡献需落在正常 source-only 异常检测、异常敏感性、继承 suffix 的必要性和 source-only 选点的实际价值。其分类/分割任务训练不能直接移入本项目|
 |[PDD](https://openaccess.thecvf.com/content/CVPR2026/html/Lu_PDD_Manifold-Prior_Diverse_Distillation_for_Medical_Anomaly_Detection_CVPR_2026_paper.html)，CVPR 2026；[全文](https://arxiv.org/html/2603.07142v1)|以异构冻结教师、流形对齐和双学生处理医学异常；使用目标数据集正常训练，不能与跨模态 zero-shot 数字直接比较|异构编码器加特征差异已有相近工作；需要证明 stitch/tail、医学 source/target 和 source-only 选点的独立作用|
 |[VisualAD](https://openaccess.thecvf.com/content/CVPR2026/html/Hou_VisualAD_Language-Free_Zero-Shot_Anomaly_Detection_via_Vision_Transformer_CVPR_2026_paper.html)，CVPR 2026；[全文](https://arxiv.org/html/2603.07952v1)|冻结视觉 Transformer 中学习正常/异常 tokens；用工业辅助数据监督，跨工业/医学数据集评估|视觉-only、冻结 backbone、轻量模块本身不够构成新颖性；适合作为外部 zero-shot 比较，但辅助异常标签与分辨率必须披露|
-|[AnomalyVFM](https://maticfuc.github.io/anomaly_vfm/)，CVPR 2026；[全文](https://arxiv.org/html/2601.20524v2)|以多样合成数据和低秩适配将 VFM 变为 zero-shot detector，比较多个 backbone、数据与适配策略|三类简易合成扰动的响应不能替代真实病变泛化；应分析扰动类型、响应与真实检测的联系，不能直接移植其训练方案改变原方法|
+|[AnomalyVFM](https://openaccess.thecvf.com/content/CVPR2026/html/Fucka_AnomalyVFM_--_Transforming_Vision_Foundation_Models_into_Zero-Shot_Anomaly_Detectors_CVPR_2026_paper.html)，CVPR 2026；[全文](https://arxiv.org/html/2601.20524v2)|以合成正常/异常图和掩码监督低秩适配，将 VFM 变为 zero-shot detector，比较多个 backbone、数据与适配策略|合成扰动响应不能替代真实病变泛化；外部比较须披露合成异常监督，不能直接加入原 normal-only 训练|
 |[Grounding Functional Similarity by Invariance-Aware Model Stitching](https://proceedings.mlr.press/v306/athanasiadis26a.html)，ICML 2026|指出前向可拼接不等于共享功能/不变性，以前向和反向兼容性检验表征|正常 NFFA loss 低或 matched 优于 shuffled 仅说明对齐；异常敏感性、输入依赖性及检测价值仍须独立证据。原 ICLR 投稿版本不另算一篇接收论文|
-|[FoundAD](https://iclr.cc/virtual/2026/poster/10008894)，ICLR 2026；[全文](https://arxiv.org/html/2510.01934v1)，[代码](https://github.com/ymxlzgy/FoundAD)|冻结相同视觉编码器、训练非线性投影将合成异常特征映回正常流形，以残差检测；正式为 few-shot。会议页面核验接收，预印本首发 2025|与轻量接口+差异检测很接近。必须证明跨架构继承的 suffix 的作用；其 few-shot 数字不能放入严格 target-free 主表。source-only 迁移对照须独立固定方案|
+|[FoundAD](https://proceedings.iclr.cc/paper_files/paper/2026/hash/9e47a0bc530cc88b09b7670d2c130a29-Abstract-Conference.html)，ICLR 2026；[正式全文](https://openreview.net/pdf?id=YRrlJ8oVEH)，[代码](https://github.com/ymxlzgy/FoundAD)|冻结视觉编码器、训练非线性投影将合成异常特征映回正常流形，以残差检测；目标正常样本 1/2/4-shot。预印本首发 2025|与轻量接口+差异检测很接近。必须证明跨架构继承的 suffix 的作用；其 few-shot 数字不能放入严格 target-free 主表。source-only 迁移对照须独立固定方案|
 |[DNP-ConFormer](https://papers.miccai.org/miccai-2026/0296-Paper0431.html)，MICCAI 2026；[全文](https://papers.miccai.org/miccai-2026/paper/0431_paper.pdf)|原型引导重建、EMA 编码器与多样性对齐；使用数据集正常训练，报告重复运行及定位指标|公开评审明确关注异常图依据、backbone 公平性、基线覆盖和泛化范围；这些是实验设计依据，不是所有 venue 的强制清单|
 |[AUCp](https://pubmed.ncbi.nlm.nih.gov/42009338/)，IEEE TMI 2026，45(7):3720–3733，DOI 10.1109/TMI.2026.3684946；[全文](https://arxiv.org/html/2606.08742v1)|利用正常训练数据与无标签混合评估数据选择模型，并研究代理指标与真 AUC 的关系|source-only AOSS 需要相关性、regret 与简单比较，不能只展示公式；AUCp 使用无标签评估分布，不能直接替代禁止 target 数据参与选择的 AOSS|
 |[UniTransAD](https://pubmed.ncbi.nlm.nih.gov/42430321/)，IEEE TMI 2026，45(9):4876–4891，DOI 10.1109/TMI.2026.3711975；[作者代码](https://github.com/zhibaishouheilab/UniTransAD)|脑 MRI 翻译与多层差异检测，Brain-OmniA 汇集多个病理与序列来源。这里只依据摘要和作者仓库，不声称已读完付费全文|多模态 BMAD 并不自动证明外部医院或病种泛化；需独立来源与病例标识。其设置也不是当前 leave-one-modality-out|
-|[Q-Former Autoencoder](https://github.com/emirhanbayar/QFAE)，WACV 2026；[作者全文](https://arxiv.org/html/2507.18481v1)|冻结 DINO/DINOv2 等特征，经瓶颈及重建产生医学异常信号；在各目标数据集正常图上训练|已覆盖冻结特征、轻量桥接和多尺度重建；可参考重建/瓶颈消融与定位证据。原始数值只能作为目标域正常训练的参考，不能填入 zero-shot 主表|
+|[Q-Former Autoencoder](https://openaccess.thecvf.com/content/WACV2026/html/Dalmonte_Q-Former_Autoencoder_A_Modern_Framework_for_Medical_Anomaly_Detection_WACV_2026_paper.html)，WACV 2026；[补充材料](https://openaccess.thecvf.com/content/WACV2026/supplemental/Dalmonte_Q-Former_Autoencoder_A_WACV_2026_supplemental.pdf)|冻结 DINO/DINOv2 等特征，经瓶颈及重建产生医学异常信号；补充材料明确四个 BMAD 数据集分别训练模型|已覆盖冻结特征、轻量桥接和多尺度重建；可参考重建/瓶颈消融与定位证据。原始数值只能作为目标域正常训练的参考，不能填入 zero-shot 主表|
+|[SubspaceAD](https://openaccess.thecvf.com/content/CVPR2026/html/Lendering_SubspaceAD_Training-Free_Few-Shot_Anomaly_Detection_via_Subspace_Modeling_CVPR_2026_paper.html)，CVPR 2026|冻结 DINOv2、用少量目标正常图拟合 PCA，或在 batched zero-shot 设置使用目标批次，按子空间残差检测|需要简单统计/单 encoder 控制。原 few-shot 和目标批次设置均不能当严格 target-free；source-only PCA 迁移对照需另立固定方案|
+|[Spatial-FAD](https://papers.miccai.org/miccai-2026/0135-Paper3052.html)，MICCAI 2026，Bridging Vision Foundation Model Priors with CLIP for Spatial-aware Few-shot Anomaly Detection in Medical Images|CLIP 与 DINOv3 空间先验、适配器和原型记忆；支持集含目标正常/异常及 lesion mask，属于 few-shot|医学双模型互补已有近邻；需区分拼接和简单融合，并匹配支持数据、滑窗预算、参数与推理成本|
+|[WALDO](https://papers.miccai.org/miccai-2026/1147-Paper0474.html)，MICCAI 2026，Wasserstein-Aligned Localisation for VLM-Based Distributional OOD Detection in Medical Imaging|无优化训练，但依赖健康参考池、DINOv3 检索及 VLM API，主要研究病灶定位|training-free 不等于无目标参考。关注病变大小、假阳性、完整推理成本；其定位指标不能直接替代本项目 image AUROC|
 
 以上来源的原文与公开代码确认发表/实验设置；“本研究需要什么”是对照后提出的
 研究判断，并非论文作者给本项目的指令。文献没有给出统一发表 AUROC 门槛。
+
+### 2026-10-05 复核：创新主张与复现边界
+
+以上共十三篇正式 2026 主会/期刊工作。另有直接相关的
+[BSMAD](https://openaccess.thecvf.com/content/CVPR2026W/Med-Reasoner/html/Lin_BSMADBridging_Semantic_and_Structural_Manifolds_for_Robust_Cross-Modality_Medical_Anomaly_CVPRW_2026_paper.html)
+为 CVPR 2026 **Workshop**，不计入主会；完整监督协议仍需另核验。
+
+不能将“首次异构模型拼接”“首次最终特征对齐”作为当前创新主张。
+Mai 等的最终特征匹配与当前 NFFA 接近，接口和数学形式的差异应逐项说明。
+要主张新零样本异常检测方法，需证明正常对齐如何保留异常差异，以及 inherited
+suffix 相对 direct reconstruction、未训练接口、同 encoder 自拼接/投影、简单
+双 encoder 融合的增量。后三类仍需独立固定对照方案；本轮没有擅自扩展训练矩阵。
+原 matched_tail/no_tail/untrained_adapter 首先提供可检验的组件必要性证据。
+
+PDD [作者仓库](https://github.com/OxygenLu/PDD) 本次只有页面/README 等，未发现
+可运行训练实现；不能安排成即时复现基线。DNP-ConFormer 正式版使用 OCT2017、
+APTOS2019、ISIC2018 和 in-house BrainMRI，五次运行；其定位指标来自私有 BrainMRI，
+仓库 Br35H 脚本不能冒充该正式数据。UniTransAD 的 tune.py 使用 validation
+选择 checkpoint/后处理，不可直接移入原 AOSS。VisualAD 的辅助真实异常/掩码与
+AnomalyVFM 的合成异常/掩码都要披露，不能当 normal-only 同预算组件控制。
 
 ## 可选附属实验：原 screening 网格的机制—选择分析
 
@@ -104,7 +128,7 @@ python -m src.analyze_screen_response --input results/transfer/screen_response_a
    直接 feature reconstruction 对照；在正常 source 上先检验必要性，再按既有 target
    评价。现有 linear/MLP 消融训练预算与 final 有差异，不能当作同预算组件因果对照。
    新增同预算 matched_tail/no_tail、untrained_adapter 与原模型重放入口，详见
-   METHOD_PLAN_CN.md；其 GPU 结果尚未完成。其他 shuffle 对照仍未新增。
+   METHOD_PLAN_CN.md；必须以完整取回 GPU receipts 为准。其他 shuffle/self-stitch 对照仍未新增。
 3. **公平基线。** 主比较优先加入无需 target 正常样本的 WinCLIP，以及 VisualAD/
    AnomalyVFM 的公开辅助训练模型。逐项记录辅助异常标签、预训练数据、分辨率、
    backbone、参数和算力；PDD/DNP/QFAE 或 target-normal PatchCore 属不同设置，另列参考。
@@ -122,7 +146,7 @@ python -m src.analyze_screen_response --input results/transfer/screen_response_a
    单独列 cache 时间。以后新增训练保存输入 manifest、预算、环境、权重哈希。
 
 基线接入、外部数据和定位评估仍需独立固定方案，不把整张清单视为已完成。
-当前新增方法组件训练/部署验证，尚待真实 GPU 运行。研究主张首先是参数拼接
+当前新增方法组件训练/部署验证，须取得并核验真实 GPU 产物。研究主张首先是参数拼接
 新模型的零样本异常检测能力；医学效应和选点证据围绕此主张，不替代方法增量。
 不能据上述检索宣称“首次参数拼接异常检测”，该优先权需要更广年份/术语检索。
 代码、测试和方法计划同步 Git；所有结果/图表/日志/数据/cache/权重保持忽略。

@@ -68,9 +68,10 @@ def effects(frame):
     return pd.DataFrame(result)
 
 
-def run(root):
+def run(root, followup=None, output=None, as_of="2026-10-03"):
     result = root / "results"
-    out = result / "analysis/method_review_20261003"
+    followup = followup if followup is not None else result / "transfer"
+    out = output if output is not None else result / "analysis/method_review_20261003"
     out.mkdir(parents=True, exist_ok=True)
     cfg = yaml.safe_load((root / "configs/experiment.yaml").read_text(encoding="utf-8"))
     selected = read(result / "selected_configs.json")
@@ -90,10 +91,10 @@ def run(root):
     summary.to_csv(out / "main_summary.csv", index=False)
     effects(seed).to_csv(out / "locked_pretraining_effects.csv", index=False)
     for name, count in [("mechanism_audit",4), ("paired_response_audit",62), ("common_stitch",53)]:
-        verify_returned(result / "transfer" / name, count)
-        inputs.append(result / "transfer" / name / "run_manifest.json")
+        verify_returned(followup / name, count)
+        inputs.append(followup / name / "run_manifest.json")
     common_rows = []
-    for p in sorted((result / "transfer/common_stitch").glob("*_seed*.json")):
+    for p in sorted((followup / "common_stitch").glob("*_seed*.json")):
         common_rows += [dict(row, target_block=read(p)["target_block"]) for row in read(p)["rows"]]
     if len(common_rows) != 144: raise ValueError("Incomplete common-position comparison")
     common_effects = pd.concat([effects(macros([r for r in common_rows if r["target_block"]==block])).assign(target_block=block)
@@ -118,7 +119,7 @@ def run(root):
                               regret=max(y)-y[index], uniform_random_expectation=float(np.mean(y)),
                               selected_minus_uniform=y[index]-np.mean(y)))
     pd.DataFrame(selection).to_csv(out / "original_selection_evidence.csv", index=False)
-    align = pd.read_csv(result / "transfer/mechanism_audit/alignment.csv")
+    align = pd.read_csv(followup / "mechanism_audit/alignment.csv")
     align["pair"] = align.job.str.extract(r"^(medical_to_medical|medical_to_general|general_to_medical|general_to_general)")[0].map({f"{s}_to_{t}":p for (s,t),p in PAIRS.items()})
     align["seed"] = align.job.str.extract(r"seed(\d+)$")[0].astype(int)
     a = align.groupby(["pair","seed","held_out","source_modality","control"]).nffa_loss.mean().reset_index()
@@ -144,7 +145,7 @@ def run(root):
     axes[2].set_xticks(range(4),pairs);axes[2].set_ylabel("Source synthetic net response");axes[2].set_title("Mechanism evidence; not clinical AUROC")
     fig.suptitle("Parameter-stitching method v1: mean ± SD of 3 seeds",fontsize=12)
     fig.savefig(out/"method_evidence.png",dpi=180);fig.savefig(out/"method_evidence.pdf");plt.close(fig)
-    lines=["# 参数拼接零样本异常检测：按方法主线重整", "", "2026-10-03。核心目标是设计参数模块拼接的新模型；医学预训练矩阵为方法验证。",
+    lines=["# 参数拼接零样本异常检测：按方法主线重整", "", f"{as_of}。核心目标是设计参数模块拼接的新模型；医学预训练矩阵为方法验证。",
            "", "## 方法与目前证据", "", "F=T_suffix∘A_phi∘C_prefix；继承参数冻结，仅正常 source 学习 phi。完整 detector 仍需 frozen reference R，原 contrast_topk 不变。",
            "", "|Pair|六 dataset image AUROC ± seed SD|有 mask 子集 pixel AUROC ± seed SD|", "|---|---:|---:|"]
     for p in pairs:
@@ -160,10 +161,10 @@ def run(root):
               "", "## 下一轮与发表缺口", "", "首要是完整模型实体及 inherited suffix 的同预算必要性：固定 original/matched_tail/no_tail/untrained_adapter，全部训练完成后统一评估。见仓库 docs/METHOD_PLAN_CN.md，运行 bash run_method_controls.sh。",
               "随后补强公平 target-free 基线、固定 map 的 AUPRO/AP、独立来源及 patient/slide 分组统计、完整 detector 效率。若普通 no_tail 重建同样有效，需发展新的方法机制，不能继续堆积医学效应或代理诊断作为算法贡献。",
               "正常流形瓶颈/结构约束与 source-only 合成正常化目标仅为待固定的研究方向；本轮未新增 loss，未把 AOSS 样本用于训练。已看 BMAD test 不能反复用于研发搜索，新的确认性数据需独立保留。",
-              "", "2026 正式近邻九篇及来源：仓库 docs/PUBLICATION_GAP_PLAN_2026_CN.md。包括 ICML invariance-aware stitching、CVPR VisualAD/AnomalyVFM/PDD、ICLR FoundAD、MICCAI DNP-ConFormer、WACV QFAE、TMI AUCp/UniTransAD。",
+              "", "2026 正式近邻及来源：仓库 docs/PUBLICATION_GAP_PLAN_2026_CN.md。尤其需对照 CVPR Revisiting Model Stitching 的最终特征匹配与 self-stitch 控制，以及 VisualAD/AnomalyVFM/PDD、FoundAD 等异常检测方法。",
               "拼接、轻量接口和残差本身已有近邻；需显示模块组合的实质增量。few-shot/目标正常训练结果不混入零样本主表，没有统一发表 AUROC 门槛，也不宣称首次。",
               "", "## 完整性及限制", "", "重验原 12 jobs/72 rows；mechanism 4、paired 62、common 53 个返回输出 hash。paired 73728 行/300 replay 与既有 CPU audit 一致。",
-              "本地没有服务器完整 cache/权重，不能替服务器宣称所有原输入字节一致；大数组/旧 target 权重仍为 stat 保护。患者标识不足，seed SD 不是患者 CI。新增 GPU 组件实验尚未运行。",
+              "本地没有服务器完整 cache/权重，不能替服务器宣称所有原输入字节一致；大数组/旧 target 权重仍为 stat 保护。患者标识不足，seed SD 不是患者 CI。本报告仅汇总历史 v1 证据，新增 GPU 方法对照须另用 analyze_method_controls 验证，不能从本报告判断服务器是否跑过。",
               "本报告、表格、图和 hash 都保持忽略，不同步仓库。原主结果、选择、预算和评分没有改变。"]
     (out/"report_CN.md").write_text("\n".join(lines)+"\n",encoding="utf-8")
     (out/"input_hashes.json").write_text(json.dumps({str(p):sha256(p) for p in inputs},indent=2),encoding="utf-8")
@@ -172,4 +173,9 @@ def run(root):
 
 if __name__ == "__main__":
     ap=argparse.ArgumentParser();ap.add_argument("--root",type=Path,default=Path("."))
-    run(ap.parse_args().root.resolve())
+    ap.add_argument("--followup",type=Path,help="Returned follow-up directory; defaults to results/transfer")
+    ap.add_argument("--output",type=Path,help="Independent analysis destination")
+    ap.add_argument("--as-of",default="2026-10-03",help="Report date supplied by the analyst")
+    args=ap.parse_args();root=args.root.resolve()
+    run(root, (root/args.followup).resolve() if args.followup else None,
+        (root/args.output).resolve() if args.output else None, args.as_of)

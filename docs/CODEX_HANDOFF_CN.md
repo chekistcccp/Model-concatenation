@@ -1405,3 +1405,25 @@ coordinator 独占全局 manifest/summary 写入；worker 按 phase/job 写独�
 无法解释的 plan 差异继续拒绝，不自动删结果、归档或重训。详见
 [FOLLOWUP_EXPERIMENTS_CN.md](FOLLOWUP_EXPERIMENTS_CN.md)。当前主线仍运行
 run_method_controls.sh；已完整取回的历史共同点结果无需重新运行来推进方法实验。
+
+# 44. 2026 文献复核与返回阶段检查（2026-10-05）
+
+PUBLICATION_GAP_PLAN_2026_CN.md 已扩充为十三篇正式 2026 工作，新增最直接的
+CVPR Revisiting Model Stitching In the Foundation Model Era（最终特征匹配、自拼接
+容量控制）以及 SubspaceAD、Spatial-FAD、WALDO。不要将模型拼接或最终特征匹配
+本身作为首次贡献；方法主张须有正常 source-only 检测收益与继承后段必要性证据。
+文献数字不可替代同协议重跑，目标正常/few-shot/无标签目标选择的信息权限单列。
+
+新增只读 src.audit_return_package：检测归档路径、阶段、完成状态和 output_sha256；
+--require-stage method_controls 缺失时先保存报告再非零退出。它不替代科学协议
+及指标检查，也不解压覆盖原始结果。返回路径见 METHOD_PLAN_CN.md。
+
+run_method_controls.sh 对已有完整方法产物调用 CPU 验证后重新打包，不启动
+训练/评估 worker；验证失败保留并停止，仍不允许覆盖/续跑。下载其明确指定的
+method_controls_run_*.tar.gz。src.analyze_method_evidence 增加 --followup、--output、
+--as-of 参数，便于独立复算不同批次的历史 v1 证据，不写原输入或重新选点。
+
+后续顺序：完整方法四 arm → 同信息权限强基线/自拼接与融合机制控制 → 固定
+map 定位/完整推理效率 → 冻结方案后的独立来源验证。发现 no_tail 同样有效时，
+需继续发展方法，不能用医学因子分析或 AOSS 诊断替代算法增量。所有数字、图、
+报告和审计 JSON 保持 results/ 忽略；代码、测试和方法说明同步仓库。

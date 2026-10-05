@@ -2,7 +2,7 @@
 
 2026-10-03 按用户澄清制定。主线：**设计参数模块拼接方法，组成新模型，实现
 零样本异常检测**。具体数值、图表、判断和运行日志仅保存在 results/analysis/。
-2026 年九篇已核验近邻及协议区别见 [PUBLICATION_GAP_PLAN_2026_CN.md](PUBLICATION_GAP_PLAN_2026_CN.md)。
+2026 年十三篇已核验近邻及协议区别见 [PUBLICATION_GAP_PLAN_2026_CN.md](PUBLICATION_GAP_PLAN_2026_CN.md)。
 
 ## 方法 v1 与边界
 
@@ -90,8 +90,23 @@ CSV 重算 AUROC/AP、核对身份/顺序/覆盖，生成同 seed contrast 表�
 python -m src.analyze_method_controls --input results/transfer/method_controls
 ```
 
-成功及常规失败都尝试打包；断电/SIGKILL 不保证。已有产物拒绝覆盖/续跑，失败包
-先取回分析，保留全部服务器新权重。原数据、代码和结果文件内容/大数组 stat 均受保护。
+成功及常规失败都尝试打包；断电/SIGKILL 不保证。已有产物先调用完整 CPU 验证：
+验证通过则仅重生成分析并重新打包，不启动 worker；失败则保留并打包证据，拒绝
+覆盖/续跑/重训。原 manifest、指标、预测与全部服务器新权重保留；原数据、代码
+和结果文件内容/大数组 stat 均受保护。
+
+返回前确认拿到的是终端 `[TRANSFER]` 指向的 **method_controls_run_*.tar.gz**，
+包中应有 method_controls/run_manifest.json、training_completed.json、metrics.json、
+predictions/、workers/ 和 logs/。不能只按历史 followup_results.tar.gz 包名认定阶段完整。
+可先在本地只读审计压缩包，不解压：
+
+```bash
+python -m src.audit_return_package --archive results/transfer/实际方法运行包.tar.gz \
+  --require-stage method_controls --output results/analysis/method_return_audit.json
+```
+
+缺阶段、失败状态或哈希不符会保留审计 JSON 并非零退出。此命令只检查归档完整性；
+解压后的 analyze_method_controls 仍负责训练矩阵、选点协议与指标的科学核验。
 
 ## 方法改进与发表研究的后续顺序
 
